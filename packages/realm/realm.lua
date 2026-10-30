@@ -460,12 +460,32 @@ local function entityAt(x, y)
   end
 end
 
+-- The person drawn under the mouse, the front most one: people stand tall
+-- above their tile, so a click on a body is usually on a tile behind it.
+local function personAt(mx, my)
+  local best, bestId, bestDepth
+  for id, p in pairs(ents) do
+    local s = lib[p.sprite .. "/0"] or lib["person/0"]
+    if id ~= myId and s then
+      local fx, fy = footX(p) - camX, footY(p) - camY
+      local left = p.left and fx - (s.w - 1 - s.ax) or fx - s.ax
+      local depth = math.max(p.x + p.y, p.tx + p.ty)
+      if mx >= left and mx < left + s.w and my >= fy - s.ay and my < fy - s.ay + s.h
+          and (not best or depth > bestDepth) then
+        best, bestId, bestDepth = p, id, depth
+      end
+    end
+  end
+  return bestId, best
+end
+
 local function clickTo(mx, my)
   if my >= VIEW_H or not myId then return end
   -- Inverse of the projection: a = x - y, b = x + y.
   local a, b = (mx + camX - HW) / HW, (my + camY - HH) / HH
   local x, y = math.floor((a + b) / 2 + .5), math.floor((b - a) / 2 + .5)
-  local id, p = entityAt(x, y)
+  local id, p = personAt(mx, my)
+  if not p then id, p = entityAt(x, y) end
   if p and p.kind == "wolf" then
     target = id
     send("attack %d", id)
