@@ -18,7 +18,7 @@ local PORT = 7878
 local HW, HH = 16, 8   -- half a ground diamond
 local STEPS = 6        -- frames to walk one tile, the server's 200 ms
 local FRAME_MS = 33
-local MAX_PEOPLE = 32  -- what the video card draws
+local MAX_PEOPLE = 32  -- what the video card draws (64 from V4)
 local STATUS_LEN = 106
 local NONE, MIRROR = 255, 128
 
@@ -35,11 +35,13 @@ local name = store.get("realm_name", "")
 
 -- ---------------------------------------------------------------- library
 
--- realm.lib holds every sprite of the game. The video card's store holds
--- 64 sprites and 32 KB: the ones this scene needs are packed into it, the
--- people and plain sprites first, then the variants ("tree/1") that fit;
--- a variant left out is drawn as its "/0".
+-- realm.lib holds every sprite of the game, raw and run-length. The video
+-- card's store holds 64 sprites and 32 KB (V4 cards, which have iso.info:
+-- 128 sprites, 48 KB, run-length pixels): the ones this scene needs are
+-- packed into it, the people and plain sprites first, then the variants
+-- ("tree/1") that fit; a variant left out is drawn as its "/0".
 local STORE, PIXELS, MAX_SPRITES, MAP_BYTES = 32768, 8960, 64, 8192
+local RLE, TABLE2 = false, nil  -- V4: run-length pixels, sprites 64-127
 
 local libPath, libPal
 local lib = {}           -- name -> {w, h, ax, ay, off}
@@ -51,16 +53,22 @@ local function openLibrary()
   if not libPath then error("realm.lib not found") end
   local f = fs.open(libPath)
   local head = f:read(263)
-  if head:sub(1, 5) ~= "RLIB\1" then error(libPath .. ": not a realm library") end
+  if head:sub(1, 5) ~= "RLIB\2" then error(libPath .. ": not a realm library") end
   local n = string.unpack("<I2", head, 6)
   libPal = head:sub(8, 263)
-  local idx, pos = f:read(n * 42), 1  -- an entry is at most 42 bytes
+  local idx, pos = f:read(n * 50), 1  -- an entry is at most 50 bytes
   f:close()
   for _ = 1, n do
     local l = idx:byte(pos)
-    local w, h, ax, ay, _, off = string.unpack("<BBBBBI4", idx, pos + 1 + l)
-    lib[idx:sub(pos + 1, pos + l)] = {w = w, h = h, ax = ax, ay = ay, off = off}
-    pos = pos + 10 + l
+    local w, h, ax, ay, _, off, roff, rlen = string.unpack("<BBBBBI4I4I4", idx, pos + 1 + l)
+    lib[idx:sub(pos + 1, pos + l)] = {w = w, h = h, ax = ax, ay = ay, off = off, roff = roff,
+                                      rlen = rlen}
+    pos = pos + 18 + l
+  end
+  if iso.info then
+    local info = iso.info()
+    STORE, PIXELS, MAX_SPRITES, MAX_PEOPLE = info.store, info.pixels, info.sprites, info.people
+    RLE, TABLE2 = info.rle, info.sprites64
   end
 end
 
@@ -161,8 +169,12 @@ local function wanted()
     add(b .. "/2", frames)
   end
   for code = 0, ntiles - 1 do add(tileset[code], variants) end
+  local function size(n)
+    local s = lib[n]
+    return RLE and s.rlen > 0 and math.min(s.rlen, s.w * s.h) or s.w * s.h
+  end
   table.sort(variants, function(a, b)
-    local sa, sb = lib[a].w * lib[a].h, lib[b].w * lib[b].h
+    local sa, sb = size(a), size(b)
     return sa < sb or (sa == sb and a < b)
   end)
   for _, n in ipairs(frames) do first[#first + 1] = n end
@@ -190,17 +202,24 @@ local function buildStore()
   slotOf = {}
   for _, n in ipairs(wanted()) do
     local s = lib[n]
-    if #entries < MAX_SPRITES and used + s.w * s.h <= STORE then
-      f:seek(s.off)
-      pixels[#pixels + 1] = f:read(s.w * s.h)
+    local at, len, flags = s.off, s.w * s.h, 0
+    if RLE and s.rlen > 0 and s.rlen < len then at, len, flags = s.roff, s.rlen, 1 end
+    if #entries < MAX_SPRITES and used + len <= STORE then
+      f:seek(at)
+      pixels[#pixels + 1] = f:read(len)
       slotOf[n] = #entries
-      entries[#entries + 1] = string.pack("<BBBBI4", s.w, s.h, s.ax, s.ay, used)
-      used = used + s.w * s.h
+      entries[#entries + 1] = string.pack("<BBBBI3B", s.w, s.h, s.ax, s.ay, used, flags)
+      used = used + len
     end
   end
   f:close()
-  iso.load(palette() .. table.concat(entries) .. string.rep("\0", 8 * (MAX_SPRITES - #entries))
-           .. string.rep("\255", MAP_BYTES) .. table.concat(pixels))
+  local function tableOf(first, last)
+    local t = table.concat(entries, "", first, math.min(last, #entries))
+    return t .. string.rep("\0", 8 * (last - first + 1) - #t)
+  end
+  local store = palette() .. tableOf(1, 64) .. string.rep("\255", MAP_BYTES)
+  if TABLE2 then store = store .. tableOf(65, 128) end
+  iso.load(store .. table.concat(pixels))
   storeReady = true
   if codes then iso.map(MAP, MAP, remap()) end
   sceneDirty = false

@@ -24,7 +24,8 @@ realm 192.168.1.10:7878 bob
 
 The server address and the name are remembered: later, `realm` alone
 connects again (without a name, it asks for one). It needs the HDMI
-firmware from 2026-10-30 on (the `iso` library and `pkg source`).
+firmware from 2026-10-30 on (the `iso` library and `pkg source`); the
+video card V4 (`iso.info`) shows every sprite variant and up to 64 people.
 
 ## Playing
 
@@ -40,10 +41,11 @@ firmware from 2026-10-30 on (the `iso` library and `pkg source`).
 - `packages/realm/realm.lua`: the client (network, people, walking,
   camera, status line). The map comes from the server. It draws through the
   firmware's `iso` library, so the Pico video card does the drawing.
-- `packages/realm/realm.lib`: every sprite and the palette, built by
-  artgen. The game packs the sprites a scene needs into the video card's
-  store (64 sprites, 32 KB, the layout of `video/include/vlink.h` in the
-  termina repository); variants that do not fit are drawn as their `/0`.
+- `packages/realm/realm.lib`: every sprite, raw and run-length, and the
+  palette, built by artgen. The game packs the sprites a scene needs into
+  the video card's store (the layout of `video/include/vlink.h` in the
+  termina repository: 64 sprites and 32 KB, or on a V4 card 128 run-length
+  sprites and 48 KB); variants that do not fit are drawn as their `/0`.
 - `art/palette.txt`, `art/sprites/*.txt`: the art sources, as text (see
   below).
 - `tools/artgen/`: builds `realm.lib` from `art/`, draws contact sheets,
@@ -89,7 +91,8 @@ go run . gen                  regenerate the props into art/sprites
 go run . build                write packages/realm/realm.lib
 go run . sheet sheet.png      every sprite at 3x with its size
 go run . scene scene.png      the sprites in a village corner
-go test .                     sources still match the first realm.art
+go test .                     sources match the first realm.art, run-length round trips
+go run . store4 [-raw] out    every sprite in one V4 video card store
 ```
 
 To check the package before pushing, from a termina-packages checkout:

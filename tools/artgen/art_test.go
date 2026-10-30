@@ -96,3 +96,56 @@ func TestBadSprite(t *testing.T) {
 		t.Fatal("unknown legend color accepted")
 	}
 }
+
+func TestRLE(t *testing.T) {
+	_, sprites, err := load("../../art")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range sprites {
+		r, ok := RLE(s)
+		if !ok {
+			t.Fatalf("%s: too big for run-length", s.Name)
+		}
+		if !bytes.Equal(UnRLE(r, s.W, s.H), s.Px) {
+			t.Fatalf("%s: run-length round trip differs", s.Name)
+		}
+	}
+	// Long runs split at 128.
+	long := &Sprite{W: 300 / 2, H: 1, Px: make([]byte, 150)}
+	for i := 10; i < 150; i++ {
+		long.Px[i] = 5
+	}
+	long.Px[149], long.Px[148] = 0, 0
+	r, _ := RLE(long)
+	if !bytes.Equal(UnRLE(r, long.W, long.H), long.Px) {
+		t.Fatal("long runs differ")
+	}
+}
+
+// The whole library fits one V4 store, and each sprite reads back.
+func TestStore4(t *testing.T) {
+	p, sprites, err := load("../../art")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := PackStore4(p, sprites)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, s := range sprites {
+		e := st[spritesOff+8*i:]
+		if i >= 64 {
+			e = st[sprites64+8*(i-64):]
+		}
+		off := int(e[4]) | int(e[5])<<8 | int(e[6])<<16
+		px := st[off:]
+		if e[7]&flagRLE != 0 {
+			px = UnRLE(px, s.W, s.H)
+		}
+		if !bytes.Equal(px[:s.W*s.H], s.Px) {
+			t.Fatalf("%s reads back wrong", s.Name)
+		}
+	}
+	t.Logf("%d sprites in %d bytes of %d", len(sprites), len(st), storeSize4)
+}

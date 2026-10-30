@@ -403,15 +403,124 @@ func UnpackStore(b []byte) ([]uint16, []*Sprite, error) {
 	return pal, sprites, nil
 }
 
+// ------------------------------------------------------------------ RLE
+
+// RLE encodes a sprite for the video card (vlink.h, VLINK_ISO_RLE): h + 1
+// row offsets (u16 LE, from the start, the last one the end), then per row
+// runs: n < 128 skips n + 1 clear dots, n >= 128 is followed by n - 127
+// dots. Clear dots at the end of a row are not written. ok is false when
+// it would not fit the u16 offsets.
+func RLE(s *Sprite) (out []byte, ok bool) {
+	out = make([]byte, 2*(s.H+1))
+	for y := 0; y < s.H; y++ {
+		binary.LittleEndian.PutUint16(out[2*y:], uint16(len(out)))
+		row := s.Px[y*s.W : (y+1)*s.W]
+		end := len(row)
+		for end > 0 && row[end-1] == clear {
+			end--
+		}
+		for x := 0; x < end; {
+			if row[x] == clear {
+				n := 0
+				for x+n < end && row[x+n] == clear && n < 128 {
+					n++
+				}
+				out = append(out, byte(n-1))
+				x += n
+				continue
+			}
+			n := 0
+			for x+n < end && row[x+n] != clear && n < 128 {
+				n++
+			}
+			out = append(out, byte(127+n))
+			out = append(out, row[x:x+n]...)
+			x += n
+		}
+		if len(out) > 0xFFFF {
+			return nil, false
+		}
+	}
+	binary.LittleEndian.PutUint16(out[2*s.H:], uint16(len(out)))
+	return out, true
+}
+
+// UnRLE decodes what RLE wrote, as the video card reads it.
+func UnRLE(b []byte, w, h int) []byte {
+	px := make([]byte, w*h)
+	end := int(binary.LittleEndian.Uint16(b[2*h:]))
+	for y := 0; y < h; y++ {
+		p, e := int(binary.LittleEndian.Uint16(b[2*y:])), int(binary.LittleEndian.Uint16(b[2*y+2:]))
+		e = min(e, end)
+		for i := 0; p < e && i < w; {
+			n := int(b[p])
+			p++
+			if n < 128 {
+				i += n + 1
+				continue
+			}
+			for n -= 127; n > 0 && p < e && i < w; n, i, p = n-1, i+1, p+1 {
+				px[y*w+i] = b[p]
+			}
+		}
+	}
+	return px
+}
+
+// The store of the V4 video card (termina, 2026-10-31): 48 KB, 128
+// sprites, the second 64 after the map, raw or run-length pixels.
+const (
+	storeSize4  = 49152
+	sprites64   = pixelsOff // the second table sits where pixels began
+	pixelsOff4  = sprites64 + 8*64
+	maxSprites4 = 128
+	flagRLE     = 1
+)
+
+// noRLE keeps PackStore4 to raw pixels (artgen store4 -raw).
+var noRLE bool
+
+// PackStore4 lays sprites out for the V4 card, each in its shorter form.
+func PackStore4(p *Palette, sprites []*Sprite) ([]byte, error) {
+	if len(sprites) > maxSprites4 {
+		return nil, fmt.Errorf("%d sprites, the store holds %d", len(sprites), maxSprites4)
+	}
+	out := make([]byte, pixelsOff4, storeSize4)
+	copy(out[palOff:], p.store565())
+	for i := mapOff; i < sprites64; i++ {
+		out[i] = 0xFF
+	}
+	for i, s := range sprites {
+		e := out[spritesOff+8*i:]
+		if i >= 64 {
+			e = out[sprites64+8*(i-64):]
+		}
+		data, flags := s.Px, byte(0)
+		if r, ok := RLE(s); ok && len(r) < len(data) && !noRLE {
+			data, flags = r, flagRLE
+		}
+		e[0], e[1], e[2], e[3] = byte(s.W), byte(s.H), byte(s.AX), byte(s.AY)
+		at := len(out)
+		e[4], e[5], e[6], e[7] = byte(at), byte(at>>8), byte(at>>16), flags
+		out = append(out, data...)
+	}
+	if len(out) > storeSize4 {
+		return nil, fmt.Errorf("%d bytes, the store holds %d", len(out), storeSize4)
+	}
+	return out, nil
+}
+
 // ------------------------------------------------------------------ library
 
-// The library (realm.lib) holds every sprite; the game packs the ones a
-// scene needs into the store. Little-endian:
+// The library (realm.lib) holds every sprite, raw and run-length; the game
+// packs the ones a scene needs into the store, in the form the video card
+// reads. Little-endian:
 //
-//	"RLIB" version(1) count(u16) palette(256: 128 x RGB565)
-//	count x { name length(u8) name w h ax ay(u8 each) kind(u8) offset(u32) }
-//	pixels, w * h per sprite, at its offset from the start of the file
-const libVersion = 1
+//	"RLIB" version(2) count(u16) palette(256: 128 x RGB565)
+//	count x { name length(u8) name w h ax ay(u8 each) kind(u8)
+//	          raw offset(u32) rle offset(u32) rle length(u32, 0: none) }
+//	pixels at their offsets from the start of the file
+const libVersion = 2
 
 var kinds = []string{"ground", "object", "person"}
 
@@ -426,38 +535,39 @@ func kindByte(k string) byte {
 
 // PackLibrary encodes the library.
 func PackLibrary(p *Palette, sprites []*Sprite) ([]byte, error) {
-	var idx bytes.Buffer
+	head := 4 + 1 + 2 + 2*colors
+	idxLen := 0
 	for _, s := range sprites {
 		if len(s.Name) > 32 {
 			return nil, fmt.Errorf("%s: name longer than 32", s.Name)
 		}
-		idx.WriteByte(byte(len(s.Name)))
-		idx.WriteString(s.Name)
-		idx.Write([]byte{byte(s.W), byte(s.H), byte(s.AX), byte(s.AY), kindByte(s.Kind), 0, 0, 0, 0})
+		idxLen += 1 + len(s.Name) + 17
 	}
-	head := 4 + 1 + 2 + 2*colors
-	out := make([]byte, 0, head+idx.Len())
+	out := make([]byte, 0, head+idxLen)
 	out = append(out, "RLIB"...)
 	out = append(out, libVersion)
 	out = binary.LittleEndian.AppendUint16(out, uint16(len(sprites)))
 	out = append(out, p.store565()...)
-	ix := idx.Bytes()
-	at := head + len(ix)
-	pos := 0
+	var data []byte
+	at := head + idxLen
 	for _, s := range sprites {
-		pos += 1 + len(s.Name) + 5
-		binary.LittleEndian.PutUint32(ix[pos:], uint32(at))
-		pos += 4
-		at += len(s.Px)
+		out = append(out, byte(len(s.Name)))
+		out = append(out, s.Name...)
+		out = append(out, byte(s.W), byte(s.H), byte(s.AX), byte(s.AY), kindByte(s.Kind))
+		out = binary.LittleEndian.AppendUint32(out, uint32(at+len(data)))
+		data = append(data, s.Px...)
+		r, ok := RLE(s)
+		if !ok {
+			r = nil
+		}
+		out = binary.LittleEndian.AppendUint32(out, uint32(at+len(data)))
+		out = binary.LittleEndian.AppendUint32(out, uint32(len(r)))
+		data = append(data, r...)
 	}
-	out = append(out, ix...)
-	for _, s := range sprites {
-		out = append(out, s.Px...)
-	}
-	return out, nil
+	return append(out, data...), nil
 }
 
-// UnpackLibrary decodes a library.
+// UnpackLibrary decodes a library; the run-length pixels must match.
 func UnpackLibrary(b []byte) ([]uint16, []*Sprite, error) {
 	head := 4 + 1 + 2 + 2*colors
 	if len(b) < head || string(b[:4]) != "RLIB" || b[4] != libVersion {
@@ -471,7 +581,7 @@ func UnpackLibrary(b []byte) ([]uint16, []*Sprite, error) {
 	var sprites []*Sprite
 	pos := head
 	for i := 0; i < n; i++ {
-		if pos >= len(b) || pos+1+int(b[pos])+9 > len(b) {
+		if pos >= len(b) || pos+1+int(b[pos])+17 > len(b) {
 			return nil, nil, fmt.Errorf("index cut short")
 		}
 		l := int(b[pos])
@@ -480,12 +590,16 @@ func UnpackLibrary(b []byte) ([]uint16, []*Sprite, error) {
 		s.W, s.H, s.AX, s.AY = int(e[0]), int(e[1]), int(e[2]), int(e[3])
 		s.Kind = kinds[min(int(e[4]), len(kinds)-1)]
 		off := int(binary.LittleEndian.Uint32(e[5:]))
-		if off+s.W*s.H > len(b) {
+		roff, rlen := int(binary.LittleEndian.Uint32(e[9:])), int(binary.LittleEndian.Uint32(e[13:]))
+		if off+s.W*s.H > len(b) || roff+rlen > len(b) {
 			return nil, nil, fmt.Errorf("%s: pixels outside the file", s.Name)
 		}
 		s.Px = b[off : off+s.W*s.H]
+		if rlen > 0 && !bytes.Equal(UnRLE(b[roff:roff+rlen], s.W, s.H), s.Px) {
+			return nil, nil, fmt.Errorf("%s: run-length pixels differ", s.Name)
+		}
 		sprites = append(sprites, s)
-		pos += 1 + l + 9
+		pos += 1 + l + 17
 	}
 	return pal, sprites, nil
 }

@@ -5,6 +5,7 @@
 //	artgen sheet  [-art ../../art] out.png   every sprite, 3x, with sizes
 //	artgen scene  [-art ../../art] out.png   the sprites in a village corner
 //	artgen unpack realm.art dir             a store back to text sources
+//	artgen store4 [-raw] out.bin            every sprite in a V4 video card store
 //
 // The sources are art/palette.txt and art/sprites/*.txt (see ReadSprite).
 // realm.lib holds them all; the game packs the ones a scene needs into the
@@ -27,6 +28,7 @@ func main() {
 	fs := flag.NewFlagSet(os.Args[1], flag.ExitOnError)
 	art := fs.String("art", "../../art", "directory of palette.txt and sprites/")
 	out := fs.String("out", "../../packages/realm/realm.lib", "library to write")
+	raw := fs.Bool("raw", false, "store4: no run-length pixels")
 	fs.Parse(os.Args[2:])
 	var err error
 	switch os.Args[1] {
@@ -41,6 +43,22 @@ func main() {
 		var p *Palette
 		if p, err = ReadPalette(filepath.Join(*art, "palette.txt")); err == nil {
 			err = Gen(p, filepath.Join(*art, "sprites"))
+		}
+	case "store4":
+		// Every sprite in one V4 store (raw with -raw), to test the video card.
+		if fs.NArg() != 1 {
+			usage()
+		}
+		var p *Palette
+		var sprites []*Sprite
+		if p, sprites, err = load(*art); err == nil {
+			var st []byte
+			if *raw {
+				noRLE = true
+			}
+			if st, err = PackStore4(p, sprites); err == nil {
+				err = os.WriteFile(fs.Arg(0), st, 0o644)
+			}
 		}
 	case "unpack":
 		if fs.NArg() != 2 {
@@ -82,12 +100,18 @@ func build(art, out string) error {
 	if err := os.WriteFile(out, lib, 0o644); err != nil {
 		return err
 	}
-	px := 0
+	px, packed := 0, 0
 	for _, s := range sprites {
 		px += len(s.Px)
+		if r, ok := RLE(s); ok && len(r) < len(s.Px) {
+			packed += len(r)
+		} else {
+			packed += len(s.Px)
+		}
 	}
-	fmt.Printf("%s: %d sprites, %d bytes of pixels (a scene holds %d sprites, %d bytes)\n",
-		out, len(sprites), px, maxSprites, storeSize-pixelsOff)
+	fmt.Printf("%s: %d sprites, %d bytes of pixels, %d run-length\n", out, len(sprites), px, packed)
+	fmt.Printf("a scene holds %d sprites and %d bytes (V4 video card: %d and %d)\n",
+		maxSprites, storeSize-pixelsOff, maxSprites4, storeSize4-pixelsOff4)
 	return nil
 }
 
