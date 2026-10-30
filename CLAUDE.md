@@ -6,5 +6,10 @@ conversation is in another language.
 
 # Licensing
 
-This repository is proprietary (see LICENSE) and private. Do not publish
-its files to termina-packages or any public place.
+The source is public, but realm is proprietary: keep the all-rights-reserved
+LICENSE and `license = "Proprietary"` in package.lua. Never relicense it.
+
+# Releases
+
+termina-packages publishes realm from a copy in `packages/realm/` (see
+README, "Releasing"). Develop here, then copy the files there for a release.

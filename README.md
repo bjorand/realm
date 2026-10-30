@@ -1,8 +1,8 @@
 # realm
 
 Isometric world for Termina, by Vendetta 84: an island village to walk
-around, the first step toward an online world. Proprietary, see
-[LICENSE](LICENSE); not part of the public package registry.
+around, the first step toward an online world. The source is public, but
+realm is not open source: all rights reserved, see [LICENSE](LICENSE).
 
 ## Files
 
@@ -16,6 +16,15 @@ around, the first step toward an online world. Proprietary, see
 
 ## Trying it
 
-Copy `realm.lua` and `realm.art` to the root of `A:` (or of the emulator's
-`A:` directory) and type `realm`. Installed as a package, the files go to
-`A:\pkg\realm\`, where `realm.lua` looks for `realm.art` first.
+On the machine, `pkg install realm` then `realm`: the package is published
+by [termina-packages](https://github.com/bjorand/termina-packages), which
+holds a copy of these files under `packages/realm/`.
+
+While developing, copy `realm.lua` and `realm.art` to the root of `A:` (or
+of the emulator's `A:` directory) and type `realm`.
+
+## Releasing
+
+Bump `version` in `package.lua`, then copy `package.lua`, `realm.lua`,
+`realm.art` and `LICENSE` to `packages/realm/` in termina-packages and push
+there: its CI publishes the new version.
