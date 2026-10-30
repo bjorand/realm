@@ -1,0 +1,19 @@
+# Wolf, standing, facing right. The fur is the tunic pair, so every wolf
+# can wear its own coat (grey, black, white).
+name wolf/0
+kind person
+scale 2
+anchor 16 19
+shadow 0 0 13 3
+legend o=line f=tunic F=tunic_d e=eye n=line w=bone
+---
+............o.o.
+...........ofofo
+.o.........offfo
+of.oooooooofffeoo
+.offfffffffffffon
+..offffffffffFwo.
+..oFFfffffffFoo..
+..ofFoFFo.ofFoFo.
+..ofo.oFo.ofo.oFo
+..oo..oo..oo..oo.

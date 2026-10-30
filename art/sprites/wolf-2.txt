@@ -1,0 +1,17 @@
+name wolf/2
+kind person
+scale 2
+anchor 16 19
+shadow 0 0 13 3
+legend o=line f=tunic F=tunic_d e=eye n=line w=bone
+---
+............o.o.
+...........ofofo
+.o.........offfo
+of.oooooooofffeoo
+.offfffffffffffon
+..offffffffffFwo.
+..oFFfffffffFoo..
+...ofoFo.ofoFo...
+...ofoFo.ofoFo...
+...oooo..oooo....

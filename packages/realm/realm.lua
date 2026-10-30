@@ -1,7 +1,8 @@
 -- realm: an online isometric world. The island, its village, its wolves and
 -- the other players come from a realm server (github.com/bjorand/realm-server);
--- the colors and sprites come from realm.art. The video card draws the world
--- (the iso library), this program only moves the camera and the people.
+-- the colors and sprites come from realm.lib, built by tools/artgen. The video
+-- card draws the world (the iso library), this program only moves the camera
+-- and the people.
 --
 --   realm [host[:port]] [name]   both are remembered for the next time
 --
@@ -12,20 +13,18 @@
 --
 -- Copyright (c) 2026 Vendetta 84. All rights reserved. See LICENSE.
 
-local PROTOCOL = 1
+local PROTOCOL = 2
 local PORT = 7878
 local HW, HH = 16, 8   -- half a ground diamond
 local STEPS = 6        -- frames to walk one tile, the server's 200 ms
 local FRAME_MS = 33
 local MAX_PEOPLE = 32  -- what the video card draws
 local STATUS_LEN = 106
+local NONE, MIRROR = 255, 128
 
--- Sprites of realm.art: 3 variants of each ground, then the objects and
--- the 3 frames of a person (standing, two walking).
-local G_WATER, PERSON, NONE = 0, 21, 255
--- Its colors.
+-- Colors of the realm palette (art/palette.txt).
 local DEEP, LINE, TUNIC, TEXT, HUD_BG, PHOS = 9, 30, 33, 37, 38, 39
-local TUNICS = 64      -- each person's tunic and its shade
+local TUNICS = 64      -- each person's tunic and its shade, set here
 
 -- ----------------------------------------------------------------- config
 
@@ -34,45 +33,189 @@ if arg[2] then store.set("realm_name", arg[2]) end
 local server = store.get("realm_srv", "localhost:" .. PORT)
 local name = store.get("realm_name", "")
 
+-- ---------------------------------------------------------------- library
+
+-- realm.lib holds every sprite of the game. The video card's store holds
+-- 64 sprites and 32 KB: the ones this scene needs are packed into it, the
+-- people and plain sprites first, then the variants ("tree/1") that fit;
+-- a variant left out is drawn as its "/0".
+local STORE, PIXELS, MAX_SPRITES, MAP_BYTES = 32768, 8960, 64, 8192
+
+local libPath, libPal
+local lib = {}           -- name -> {w, h, ax, ay, off}
+
+local function openLibrary()
+  for _, p in ipairs({"/pkg/realm/realm.lib", "realm.lib", "/realm.lib"}) do
+    if fs.exists(p) then libPath = p end
+  end
+  if not libPath then error("realm.lib not found") end
+  local f = fs.open(libPath)
+  local head = f:read(263)
+  if head:sub(1, 5) ~= "RLIB\1" then error(libPath .. ": not a realm library") end
+  local n = string.unpack("<I2", head, 6)
+  libPal = head:sub(8, 263)
+  local idx, pos = f:read(n * 42), 1  -- an entry is at most 42 bytes
+  f:close()
+  for _ = 1, n do
+    local l = idx:byte(pos)
+    local w, h, ax, ay, _, off = string.unpack("<BBBBBI4", idx, pos + 1 + l)
+    lib[idx:sub(pos + 1, pos + l)] = {w = w, h = h, ax = ax, ay = ay, off = off}
+    pos = pos + 10 + l
+  end
+end
+
+-- Tunics: each color the server gives a person gets two palette entries
+-- from 64 on, the color and its shade.
+local tunicList, tunicSlot = {}, {}
+local storeReady = false
+
+local function shadeOf(c)
+  local r, g, b = c >> 16, c >> 8 & 0xFF, c & 0xFF
+  return (r // 2 + 8) << 16 | (g // 2 + 4) << 8 | (b // 2 + 8)
+end
+
+local function rgb565(c)
+  return (c >> 19 & 0x1F) << 11 | (c >> 10 & 0x3F) << 5 | (c >> 3 & 0x1F)
+end
+
+local function tunicOf(rgb)
+  if tunicSlot[rgb] then return tunicSlot[rgb] end
+  if #tunicList >= 32 then return TUNICS end
+  local c = tonumber(rgb, 16) or 0x808080
+  tunicList[#tunicList + 1] = c
+  local tunic = TUNICS + 2 * (#tunicList - 1)
+  tunicSlot[rgb] = tunic
+  if storeReady then
+    -- Rare after login: each call sends the whole store again.
+    iso.color(tunic, c)
+    iso.color(tunic + 1, shadeOf(c))
+  end
+  return tunic
+end
+
+local function palette()
+  local pal = {string.unpack(string.rep("<I2", 128), libPal)}
+  pal[129] = nil  -- the position string.unpack returns
+  for i, c in ipairs(tunicList) do
+    pal[TUNICS + 2 * i - 1] = rgb565(c)
+    pal[TUNICS + 2 * i] = rgb565(shadeOf(c))
+  end
+  return string.pack(string.rep("<I2", 128), table.unpack(pal))
+end
+
 -- ------------------------------------------------------------------ world
 
 local MAP = 0
-local blocked = {}  -- [y * MAP + x]: water or an object
+local tileset, ntiles = {}, 0  -- tile code -> sprite name, from the server
+local codes = nil        -- the server's tiles: ground code, object code
+local blocked = {}       -- [y * MAP + x]: water or an object
+local bases = {}         -- people's sprites in this scene: "person", "wolf"
+local slotOf = {}        -- sprite name -> store slot
+local sceneDirty = false
 
 local function walkable(x, y)
   return MAP > 0 and x >= 0 and y >= 0 and x < MAP and y < MAP and not blocked[y * MAP + x]
 end
 
 local function loadMap(w, h, hex)
-  local tiles = hex:gsub("%x%x", function(c) return string.char(tonumber(c, 16)) end)
+  codes = hex:gsub("%x%x", function(c) return string.char(tonumber(c, 16)) end)
   MAP = w
   for i = 0, w * h - 1 do
-    local g, o = tiles:byte(2 * i + 1, 2 * i + 2)
-    blocked[i] = g // 3 == G_WATER or o ~= NONE or nil
+    local g, o = codes:byte(2 * i + 1, 2 * i + 2)
+    local ground, object = tileset[g] or "", o ~= NONE and tileset[o & 127] or ""
+    blocked[i] = ground:match("^water") or (object ~= "" and not object:match("^flowers")) or nil
   end
-  iso.map(w, h, tiles)
+  sceneDirty = true
+end
+
+-- The slot of a sprite, or of its "/0" when the variant did not fit.
+local function resolve(n)
+  return slotOf[n] or slotOf[(n:match("^(.*)/%d+$") or n) .. "/0"]
+end
+
+local function sortedKeys(t)
+  local keys = {}
+  for k in pairs(t) do keys[#keys + 1] = k end
+  table.sort(keys)
+  return keys
+end
+
+-- The sprites of the scene, most needed first.
+local function wanted()
+  local first, frames, variants, seen = {}, {}, {}, {}
+  local function add(n, list)
+    if lib[n] and not seen[n] then
+      seen[n] = true
+      list[#list + 1] = n
+    end
+  end
+  local people = sortedKeys(bases)
+  table.insert(people, 1, "person")
+  for _, b in ipairs(people) do add(b .. "/0", first) end
+  for code = 0, ntiles - 1 do
+    local n = tileset[code]
+    if not n:match("/%d+$") or n:match("/0$") then add(n, first) end
+  end
+  for _, b in ipairs(people) do
+    add(b .. "/1", frames)
+    add(b .. "/2", frames)
+  end
+  for code = 0, ntiles - 1 do add(tileset[code], variants) end
+  table.sort(variants, function(a, b)
+    local sa, sb = lib[a].w * lib[a].h, lib[b].w * lib[b].h
+    return sa < sb or (sa == sb and a < b)
+  end)
+  for _, n in ipairs(frames) do first[#first + 1] = n end
+  for _, n in ipairs(variants) do first[#first + 1] = n end
+  return first
+end
+
+-- The server's tiles with store slots in place of tile codes.
+local function remap()
+  local slot = {}
+  for code = 0, ntiles - 1 do slot[code] = resolve(tileset[code]) end
+  local grass, out = resolve("grass/0") or 0, {}
+  for i = 1, #codes, 2 do
+    local g, o = codes:byte(i, i + 1)
+    local s = o ~= NONE and slot[o & 127]
+    out[#out + 1] = string.char(slot[g] or grass, s and (s | (o & MIRROR)) or NONE)
+  end
+  return table.concat(out)
+end
+
+-- Packs the scene's sprites into the store and sends it with the map.
+local function buildStore()
+  local f = fs.open(libPath)
+  local entries, pixels, used = {}, {}, PIXELS
+  slotOf = {}
+  for _, n in ipairs(wanted()) do
+    local s = lib[n]
+    if #entries < MAX_SPRITES and used + s.w * s.h <= STORE then
+      f:seek(s.off)
+      pixels[#pixels + 1] = f:read(s.w * s.h)
+      slotOf[n] = #entries
+      entries[#entries + 1] = string.pack("<BBBBI4", s.w, s.h, s.ax, s.ay, used)
+      used = used + s.w * s.h
+    end
+  end
+  f:close()
+  iso.load(palette() .. table.concat(entries) .. string.rep("\0", 8 * (MAX_SPRITES - #entries))
+           .. string.rep("\255", MAP_BYTES) .. table.concat(pixels))
+  storeReady = true
+  if codes then iso.map(MAP, MAP, remap()) end
+  sceneDirty = false
 end
 
 -- ----------------------------------------------------------------- people
 
 local ents, myId = {}, nil
-local slots, nslots = {}, 0  -- tunic slot of each color
 
-local function tunicOf(rgb)
-  if slots[rgb] then return slots[rgb] end
-  if nslots >= 32 then return TUNICS end
-  local tunic = TUNICS + 2 * nslots
-  nslots = nslots + 1
-  slots[rgb] = tunic
-  local c = tonumber(rgb, 16) or 0x808080
-  local r, g, b = c >> 16, c >> 8 & 0xFF, c & 0xFF
-  iso.color(tunic, c)
-  iso.color(tunic + 1, (r // 2 + 8) << 16 | (g // 2 + 4) << 8 | (b // 2 + 8))
-  return tunic
-end
-
-local function person(kind, name, x, y, color)
-  return {kind = kind, base = name, name = name, x = x, y = y, tx = x, ty = y,
+local function person(kind, sprite, name, x, y, color)
+  if not bases[sprite] and sprite ~= "person" then
+    bases[sprite] = true
+    sceneDirty = true
+  end
+  return {kind = kind, sprite = sprite, base = name, name = name, x = x, y = y, tx = x, ty = y,
           step = 0, left = false, tunic = tunicOf(color), hp = 0, maxhp = 0}
 end
 
@@ -112,8 +255,9 @@ end
 
 local function setHP(p, hp, maxhp)
   p.hp, p.maxhp = hp, maxhp
+  -- A wounded monster shows its health instead of its name (8 characters).
   if p.kind == "wolf" and hp < maxhp then
-    p.name = string.format("%s %d/%d", p.base, hp, maxhp)
+    p.name = string.format("%d/%d", hp, maxhp)
   else
     p.name = p.base
   end
@@ -156,14 +300,19 @@ local handlers = {}
 
 function handlers.welcome(a) myId = tonumber(a[1]) end
 
+function handlers.tileset(a)
+  tileset, ntiles = {}, #a
+  for i, n in ipairs(a) do tileset[i - 1] = n end
+end
+
 function handlers.map(a, rest)
   local w, h, hex = rest:match("^(%d+) (%d+) (%x+)$")
-  if hex and MAP == 0 then loadMap(tonumber(w), tonumber(h), hex) end
+  if hex then loadMap(tonumber(w), tonumber(h), hex) end
 end
 
 function handlers.spawn(a)
   local id = tonumber(a[1])
-  ents[id] = person(a[2], a[6] or "?", tonumber(a[3]), tonumber(a[4]), a[5])
+  ents[id] = person(a[2], a[3], a[7] or "?", tonumber(a[4]), tonumber(a[5]), a[6])
 end
 
 function handlers.move(a)
@@ -359,9 +508,12 @@ local function frame()
     local f = 0
     if p.step > 0 then f = 1 + (p.x + p.y + p.step * 2 // STEPS) % 2 end
     local d = p0 and math.max(math.abs(p.x - p0.x), math.abs(p.y - p0.y)) or 0
-    list[#list + 1] = {sprite = PERSON + f, x = footX(p), y = footY(p),
+    local sprite = resolve(p.sprite .. "/" .. f) or resolve("person/" .. f)
+    if not storeReady or not sprite then goto next end
+    list[#list + 1] = {sprite = sprite, x = footX(p), y = footY(p),
                        depth = math.max(p.x + p.y, p.tx + p.ty), flip = p.left,
                        tunic = p.tunic, name = p.name, d = id == myId and -1 or d}
+    ::next::
   end
   if #list > MAX_PEOPLE then
     table.sort(list, function(a, b) return a.d < b.d end)
@@ -370,13 +522,6 @@ local function frame()
   iso.frame{x = camX, y = camY, people = list, deep = DEEP, recolor = TUNIC,
             text = TEXT, line = LINE, fg = PHOS, bg = HUD_BG,
             status = hud():sub(1, STATUS_LEN)}
-end
-
-local function artFile()
-  for _, p in ipairs({"/pkg/realm/realm.art", "realm.art", "/realm.art"}) do
-    if fs.exists(p) then return fs.read(p) end
-  end
-  error("realm.art not found")
 end
 
 -- Asks for a name on the status line until a valid one is typed.
@@ -401,15 +546,8 @@ end
 
 -- ------------------------------------------------------------------- main
 
-local art = artFile()
+openLibrary()
 W, VIEW_H = iso.open()
-iso.load(art)
--- The tunics the server hands out, set up front: each iso.color sends the
--- whole store again, so doing it on the first spawn would stall the game.
-for _, rgb in ipairs({"2f7fd0", "2fa8a0", "d0702f", "c0c040", "7a5fd0", "d04f8a",
-                      "a83232", "3f8a4a", "8a3a9a", "c08a2a", "6e6a64"}) do
-  tunicOf(rgb)
-end
 if name == "" then
   name = askName()
   if not name then iso.close() return end
@@ -426,6 +564,7 @@ while not quit do
     connect()
   end
   pump()
+  if sceneDirty and codes then buildStore() end
 
   local e = key.poll()
   while e do
