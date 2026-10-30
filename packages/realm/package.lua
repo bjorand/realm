@@ -1,7 +1,7 @@
 return {
   name = "realm",
-  version = "0.1.0",
-  description = "Isometric world prototype: an island village to walk around (HDMI)",
+  version = "0.2.0",
+  description = "Online isometric world: an island village, wolves, a quest and a merchant (HDMI)",
   author = "Vendetta 84",
   license = "Proprietary",
   bin = { "realm" },
