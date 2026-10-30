@@ -31,8 +31,8 @@ video card V4 (`iso.info`) shows every sprite variant and up to 64 people.
 
 - A click walks, attacks a wolf (auto-attack every 1.5 s while next to it)
   or talks to a villager; arrows (or ZQSD/WASD) walk.
-- 1-9 pick in a menu, Esc closes it. H drinks a potion, Space stops
-  fighting, C switches the camera, Esc quits.
+- 1-9 pick in a menu, Esc closes it. J opens the quest journal, H drinks
+  a potion, Space stops fighting, C switches the camera, Esc quits.
 - Ada, on the square, asks for 5 wolves; Tom, in the house north east of
   the square, sells potions and a sword and buys pelts.
 

@@ -7,9 +7,9 @@
 --   realm [host[:port]] [name]   both are remembered for the next time
 --
 -- A click walks, attacks a wolf or talks to a villager; arrows (or ZQSD/WASD)
--- walk, 1-9 pick in a menu, H drinks a potion, Space stops fighting, C
--- switches the view between jumping near the edges and following every step,
--- Esc closes a menu or quits.
+-- walk, 1-9 pick in a menu, J opens the quest journal, H drinks a potion,
+-- Space stops fighting, C switches the view between jumping near the edges
+-- and following every step, Esc closes a menu or the journal, or quits.
 --
 -- Copyright (c) 2026 Vendetta 84. All rights reserved. See LICENSE.
 
@@ -288,6 +288,8 @@ local me = {hp = 0, maxhp = 0, gold = 0, inv = {}, weapon = nil,
             quest = "none", kills = 0, need = 0}
 local target = nil     -- id of the wolf being fought
 local menu = nil       -- text of the open menu
+local journal = nil    -- the quest log entry, from the server
+local journalOpen = false
 local notice, noticeUntil = nil, 0
 
 local function say(text, ms)
@@ -384,6 +386,8 @@ end
 function handlers.quest(a)
   me.quest, me.kills, me.need = a[1], tonumber(a[2]), tonumber(a[3])
 end
+
+function handlers.journal(a, rest) journal = rest end
 
 function handlers.say(a, rest) say(rest) end
 
@@ -509,13 +513,19 @@ local function hud()
     return "VENDETTA REALM  connecting to " .. server .. " as " .. name .. "...  Esc: quit"
   end
   if menu then return menu .. "  Esc" end
+  if journalOpen then
+    -- Servers before the journal only tell the quest's state.
+    local entry = journal or (me.quest == "active" and string.format("Wolves slain for Ada: %d/%d.",
+      me.kills, me.need)) or (me.quest == "done" and "Ada's quest is done.") or "No quest yet."
+    return "Journal  " .. entry .. "  J: close"
+  end
   if notice and sys.millis() < noticeUntil then return notice end
   local quest = me.quest == "active" and string.format("Wolves %d/%d", me.kills, me.need)
     or me.quest == "done" and "Quest done" or "Quest: see Ada"
   local fight = ""
   local t = target and ents[target]
   if t then fight = string.format("  Fighting %s %d/%d", t.base, t.hp, t.maxhp) end
-  return string.format("%s  HP %d/%d  Gold %d  Potions %d%s  %s%s  Click: walk/fight/talk  H: potion",
+  return string.format("%s  HP %d/%d  Gold %d  Potions %d%s  %s%s  H: potion  J: journal  Click: walk/fight/talk",
                        name, me.hp, me.maxhp, me.gold, me.inv.potion or 0,
                        me.weapon and "  Sword" or "", quest, fight)
 end
@@ -592,6 +602,8 @@ while not quit do
       if menu then
         menu = nil
         send("choose 0")
+      elseif journalOpen then
+        journalOpen = false
       else
         quit = true
       end
@@ -602,6 +614,8 @@ while not quit do
       frameCamera(true)
     elseif ch == "h" then
       send("use potion")
+    elseif ch == "j" then
+      journalOpen = not journalOpen
     elseif ch == " " or (e.type == "key" and e.key == "space") then
       target = nil
       send("peace")
