@@ -7,9 +7,10 @@ conversation is in another language.
 # Licensing
 
 The source is public, but realm is proprietary: keep the all-rights-reserved
-LICENSE and `license = "Proprietary"` in package.lua. Never relicense it.
+LICENSE (at the root and in `packages/realm/`) and `license = "Proprietary"`
+in package.lua. Never relicense it.
 
 # Releases
 
-termina-packages publishes realm from a copy in `packages/realm/` (see
-README, "Releasing"). Develop here, then copy the files there for a release.
+This repository is its own pkg registry (see README): any change under
+`packages/realm/` needs a new `version` in package.lua, or the CI fails.
