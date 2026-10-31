@@ -3,8 +3,10 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"compress/zlib"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -512,15 +514,19 @@ func PackStore4(p *Palette, sprites []*Sprite) ([]byte, error) {
 
 // ------------------------------------------------------------------ library
 
-// The library (realm.lib) holds every sprite, raw and run-length; the game
-// packs the ones a scene needs into the store, in the form the video card
-// reads. Little-endian:
+// The library (realm.lib) holds every sprite, raw and run-length, each
+// deflated (zlib) on its own: the game inflates the ones a scene needs
+// (zlib.inflate(file, offset)) and packs them into the store, in the form
+// the video card reads. A package file holds 64 KB at most. Little-endian:
 //
-//	"RLIB" version(2) count(u16) palette(256: 128 x RGB565)
+//	"RLIB" version(3) count(u16) palette(256: 128 x RGB565)
 //	count x { name length(u8) name w h ax ay(u8 each) kind(u8)
 //	          raw offset(u32) rle offset(u32) rle length(u32, 0: none) }
-//	pixels at their offsets from the start of the file
-const libVersion = 2
+//	the zlib streams at their offsets from the start of the file
+const libVersion = 3
+
+// maxFile is what a package file may weigh (termina-packages' mkindex).
+const maxFile = 64 * 1024
 
 var kinds = []string{"ground", "object", "person"}
 
@@ -531,6 +537,22 @@ func kindByte(k string) byte {
 		}
 	}
 	return 1
+}
+
+func deflate(b []byte) []byte {
+	var out bytes.Buffer
+	w, _ := zlib.NewWriterLevel(&out, zlib.BestCompression)
+	w.Write(b)
+	w.Close()
+	return out.Bytes()
+}
+
+func inflate(b []byte) ([]byte, error) {
+	r, err := zlib.NewReader(bytes.NewReader(b))
+	if err != nil {
+		return nil, err
+	}
+	return io.ReadAll(r)
 }
 
 // PackLibrary encodes the library.
@@ -555,14 +577,16 @@ func PackLibrary(p *Palette, sprites []*Sprite) ([]byte, error) {
 		out = append(out, s.Name...)
 		out = append(out, byte(s.W), byte(s.H), byte(s.AX), byte(s.AY), kindByte(s.Kind))
 		out = binary.LittleEndian.AppendUint32(out, uint32(at+len(data)))
-		data = append(data, s.Px...)
+		data = append(data, deflate(s.Px)...)
 		r, ok := RLE(s)
-		if !ok {
+		rleAt := at + len(data)
+		if ok {
+			data = append(data, deflate(r)...)
+		} else {
 			r = nil
 		}
-		out = binary.LittleEndian.AppendUint32(out, uint32(at+len(data)))
+		out = binary.LittleEndian.AppendUint32(out, uint32(rleAt))
 		out = binary.LittleEndian.AppendUint32(out, uint32(len(r)))
-		data = append(data, r...)
 	}
 	return append(out, data...), nil
 }
@@ -591,12 +615,19 @@ func UnpackLibrary(b []byte) ([]uint16, []*Sprite, error) {
 		s.Kind = kinds[min(int(e[4]), len(kinds)-1)]
 		off := int(binary.LittleEndian.Uint32(e[5:]))
 		roff, rlen := int(binary.LittleEndian.Uint32(e[9:])), int(binary.LittleEndian.Uint32(e[13:]))
-		if off+s.W*s.H > len(b) || roff+rlen > len(b) {
+		if off > len(b) || roff > len(b) {
 			return nil, nil, fmt.Errorf("%s: pixels outside the file", s.Name)
 		}
-		s.Px = b[off : off+s.W*s.H]
-		if rlen > 0 && !bytes.Equal(UnRLE(b[roff:roff+rlen], s.W, s.H), s.Px) {
-			return nil, nil, fmt.Errorf("%s: run-length pixels differ", s.Name)
+		px, err := inflate(b[off:])
+		if err != nil || len(px) != s.W*s.H {
+			return nil, nil, fmt.Errorf("%s: bad pixels", s.Name)
+		}
+		s.Px = px
+		if rlen > 0 {
+			r, err := inflate(b[roff:])
+			if err != nil || len(r) != rlen || !bytes.Equal(UnRLE(r, s.W, s.H), s.Px) {
+				return nil, nil, fmt.Errorf("%s: run-length pixels differ", s.Name)
+			}
 		}
 		sprites = append(sprites, s)
 		pos += 1 + l + 17

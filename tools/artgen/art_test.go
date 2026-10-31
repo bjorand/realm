@@ -7,40 +7,6 @@ import (
 	"testing"
 )
 
-// The text sources still hold the first realm.art, byte for byte.
-func TestFirstArtRoundTrip(t *testing.T) {
-	want, err := os.ReadFile("testdata/realm-0.1.art")
-	if err != nil {
-		t.Fatal(err)
-	}
-	p, sprites, err := load("../../art")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var ordered []*Sprite
-	for _, n := range oldSprites {
-		s := find(sprites, n)
-		if s == nil {
-			t.Fatalf("missing %s", n)
-		}
-		ordered = append(ordered, s)
-	}
-	// Only the first realm.art colors, as it had them.
-	old := &Palette{}
-	for _, c := range p.Colors {
-		if c.Index <= len(oldColors) {
-			old.Colors = append(old.Colors, c)
-		}
-	}
-	got, err := PackStore(old, ordered)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(got, want) {
-		t.Fatalf("store differs: %d bytes, want %d", len(got), len(want))
-	}
-}
-
 func TestLibraryRoundTrip(t *testing.T) {
 	p, sprites, err := load("../../art")
 	if err != nil {

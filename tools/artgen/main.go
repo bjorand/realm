@@ -97,6 +97,9 @@ func build(art, out string) error {
 	if err != nil {
 		return err
 	}
+	if len(lib) > maxFile {
+		return fmt.Errorf("%s: %d bytes, a package file holds %d", out, len(lib), maxFile)
+	}
 	if err := os.WriteFile(out, lib, 0o644); err != nil {
 		return err
 	}
@@ -109,9 +112,10 @@ func build(art, out string) error {
 			packed += len(s.Px)
 		}
 	}
-	fmt.Printf("%s: %d sprites, %d bytes of pixels, %d run-length\n", out, len(sprites), px, packed)
-	fmt.Printf("a scene holds %d sprites and %d bytes (V4 video card: %d and %d)\n",
-		maxSprites, storeSize-pixelsOff, maxSprites4, storeSize4-pixelsOff4)
+	fmt.Printf("%s: %d sprites, %d bytes of pixels, %d run-length, %d bytes deflated (64 KB at most)\n",
+		out, len(sprites), px, packed, len(lib))
+	fmt.Printf("a scene holds %d sprites and %d bytes of pixels (V5 video card)\n",
+		maxSprites4, storeSize4-pixelsOff4)
 	return nil
 }
 
@@ -141,7 +145,7 @@ func picture(kind, art, out string) error {
 		}
 		return png.Encode(f, Sheet(pal, sprites, bg))
 	}
-	return png.Encode(f, Scene(pal, sprites))
+	return png.Encode(f, Scene(pal, sprites, tileW, tileH))
 }
 
 // Names of the colors and sprites of the first realm.art, in store order.

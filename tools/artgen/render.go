@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	tileW, tileH = 32, 16
-	recolorFrom  = 33 // TUNIC: people's tunic, recolored per person
+	tileW, tileH = 32, 32 // square diamonds, as in Ultima Online
+	recolorFrom  = 33     // TUNIC: people's tunic, recolored per person
 )
 
 // screen is an 8-bit picture in store colors, like the video card's: bit 7
@@ -145,7 +145,7 @@ func Sheet(pal []uint16, sprites []*Sprite, bg byte) *image.RGBA {
 			sc := newScreen(cellW/2, h, bg)
 			fx, fy := sc.w/2, h-tileH/2
 			if s.Kind == "ground" {
-				sc.blit(s, fx-tileW/2, fy-tileH/2, false, 0)
+				sc.blit(s, fx-s.W/2, h-s.H, false, 0) // at the bottom of the cell, whatever its height
 			} else {
 				if g := find(sprites, "grass/0"); g != nil {
 					sc.blit(g, fx-tileW/2, fy-tileH/2, false, 0)
@@ -168,8 +168,9 @@ func Sheet(pal []uint16, sprites []*Sprite, bg byte) *image.RGBA {
 
 // Scene draws a small village corner the way the video card would: ground,
 // then objects and people back to front, so new sprites can be judged in
-// place. Every object and person of the library appears in it.
-func Scene(pal []uint16, sprites []*Sprite) *image.RGBA {
+// place. Every object and person of the library appears in it, by a house
+// corner; tiles are tw x th.
+func Scene(pal []uint16, sprites []*Sprite, tw, th int) *image.RGBA {
 	const n = 14
 	ground := make([]string, n*n)
 	object := make([]string, n*n)
@@ -199,16 +200,21 @@ func Scene(pal []uint16, sprites []*Sprite) *image.RGBA {
 	}
 	var actors []actor
 	slots := [][2]int{}
+	// A house corner on the stone square.
+	for i := 9; i < n; i++ {
+		object[9*n+i], object[i*n+9] = "wall", "wall"
+	}
 	for y := 2; y < n; y += 2 {
 		for x := 1; x < n; x += 2 {
-			if x != 7 {
+			if x != 7 && !(x >= 9 && y >= 9) {
 				slots = append(slots, [2]int{x, y})
 			}
 		}
 	}
 	i := 0
 	for _, s := range sprites {
-		if s.Kind == "ground" || i >= len(slots) {
+		if s.Kind == "ground" || s.Name == "wall" || s.Name == "blank" || strings.HasPrefix(s.Name, "meter") ||
+			i >= len(slots) {
 			continue
 		}
 		p := slots[i]
@@ -220,9 +226,9 @@ func Scene(pal []uint16, sprites []*Sprite) *image.RGBA {
 				tunic: firstTunic + 2*byte(i%len(tunics))})
 		}
 	}
-	const hw, hh = tileW / 2, tileH / 2
-	camX, camY := -(n-1)*hw-8, -40
-	sc := newScreen(n*tileW+16, n*tileH+80, 9)
+	hw, hh := tw/2, th/2
+	camX, camY := -(n-1)*hw-8, -80
+	sc := newScreen(n*tw+16, n*th+120, 9)
 	for d := 0; d <= 2*n-2; d++ {
 		for x := 0; x < n; x++ {
 			y := d - x

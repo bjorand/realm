@@ -16,10 +16,10 @@
 
 local PROTOCOL = 2
 local PORT = 7878
-local HW, HH = 16, 8   -- half a ground diamond
+local HW, HH = 16, 16  -- half a ground diamond: square, as in Ultima Online
 local STEPS = 6        -- frames to walk one tile, the server's 200 ms
 local FRAME_MS = 33
-local MAX_PEOPLE = 32  -- what the video card draws (64 from V4)
+local MAX_PEOPLE = 64  -- what the video card draws (iso.info)
 local STATUS_LEN = 106
 local NONE, MIRROR = 255, 128
 
@@ -36,13 +36,16 @@ local name = store.get("realm_name", "")
 
 -- ---------------------------------------------------------------- library
 
--- realm.lib holds every sprite of the game, raw and run-length. The video
--- card's store holds 64 sprites and 32 KB (V4 cards, which have iso.info:
--- 128 sprites, 48 KB, run-length pixels): the ones this scene needs are
--- packed into it, the people and plain sprites first, then the variants
--- ("tree/1") that fit; a variant left out is drawn as its "/0".
-local STORE, PIXELS, MAX_SPRITES, MAP_BYTES = 32768, 8960, 64, 8192
-local RLE, TABLE2 = false, nil  -- V4: run-length pixels, sprites 64-127
+-- realm.lib holds every sprite of the game, raw and run-length, each
+-- deflated on its own (zlib.inflate reads one from the file). The video
+-- card V5 draws square ground diamonds, lets objects in front of the
+-- player show through a circle around them, and keeps 128 sprites in a
+-- 48 KB store: the ones this scene needs are packed into it, the people
+-- and plain sprites first, then the variants ("tree/1") that fit; a
+-- variant left out is drawn as its "/0".
+local STORE, PIXELS, MAX_SPRITES  -- from iso.info()
+local MAP_BYTES = 8192
+local SEE_R = 34  -- the see-through circle around the player's body
 
 local libPath, libPal
 local lib = {}           -- name -> {w, h, ax, ay, off}
@@ -54,7 +57,7 @@ local function openLibrary()
   if not libPath then error("realm.lib not found") end
   local f = fs.open(libPath)
   local head = f:read(263)
-  if head:sub(1, 5) ~= "RLIB\2" then error(libPath .. ": not a realm library") end
+  if head:sub(1, 5) ~= "RLIB\3" then error(libPath .. ": not a realm library") end
   local n = string.unpack("<I2", head, 6)
   libPal = head:sub(8, 263)
   local idx, pos = f:read(n * 50), 1  -- an entry is at most 50 bytes
@@ -66,11 +69,11 @@ local function openLibrary()
                                       rlen = rlen}
     pos = pos + 18 + l
   end
-  if iso.info then
-    local info = iso.info()
-    STORE, PIXELS, MAX_SPRITES, MAX_PEOPLE = info.store, info.pixels, info.sprites, info.people
-    RLE, TABLE2 = info.rle, info.sprites64
+  local info = iso.info and iso.info()
+  if not (info and info.tile and info.see) then
+    error("realm needs the video card V5: flash both boards with the firmware of 2026-10-31 on")
   end
+  STORE, PIXELS, MAX_SPRITES, MAX_PEOPLE = info.store, info.pixels, info.sprites, info.people
 end
 
 -- Tunics: each color the server gives a person gets two palette entries
@@ -185,7 +188,7 @@ local function wanted()
   for code = 0, ntiles - 1 do add(tileset[code], variants) end
   local function size(n)
     local s = lib[n]
-    return RLE and s.rlen > 0 and math.min(s.rlen, s.w * s.h) or s.w * s.h
+    return s.rlen > 0 and math.min(s.rlen, s.w * s.h) or s.w * s.h
   end
   table.sort(variants, function(a, b)
     local sa, sb = size(a), size(b)
@@ -211,29 +214,26 @@ end
 
 -- Packs the scene's sprites into the store and sends it with the map.
 local function buildStore()
-  local f = fs.open(libPath)
   local entries, pixels, used = {}, {}, PIXELS
   slotOf, reachUp = {}, 0
   for _, n in ipairs(wanted()) do
     local s = lib[n]
     local at, len, flags = s.off, s.w * s.h, 0
-    if RLE and s.rlen > 0 and s.rlen < len then at, len, flags = s.roff, s.rlen, 1 end
+    if s.rlen > 0 and s.rlen < len then at, len, flags = s.roff, s.rlen, 1 end
     if #entries < MAX_SPRITES and used + len <= STORE then
-      f:seek(at)
-      pixels[#pixels + 1] = f:read(len)
+      local _, data = zlib.inflate(libPath, at)
+      pixels[#pixels + 1] = data
       slotOf[n] = #entries
       reachUp = math.max(reachUp, s.ay)
       entries[#entries + 1] = string.pack("<BBBBI3B", s.w, s.h, s.ax, s.ay, used, flags)
       used = used + len
     end
   end
-  f:close()
   local function tableOf(first, last)
     local t = table.concat(entries, "", first, math.min(last, #entries))
     return t .. string.rep("\0", 8 * (last - first + 1) - #t)
   end
-  local store = palette() .. tableOf(1, 64) .. string.rep("\255", MAP_BYTES)
-  if TABLE2 then store = store .. tableOf(65, 128) end
+  local store = palette() .. tableOf(1, 64) .. string.rep("\255", MAP_BYTES) .. tableOf(65, 128)
   iso.load(store .. table.concat(pixels))
   storeReady = true
   if codes then iso.map(MAP, MAP, remap()) end
@@ -620,8 +620,14 @@ local function frame()
     table.sort(list, function(a, b) return a.d < b.d end)
     for i = #list, MAX_PEOPLE + 1, -1 do list[i] = nil end
   end
+  -- Trees and walls in front of the player let them show through.
+  local see
+  if p0 then
+    see = {x = footX(p0), y = footY(p0) - 20, r = SEE_R,
+           depth = math.max(p0.x + p0.y, p0.tx + p0.ty)}
+  end
   iso.frame{x = camX, y = camY, people = list, deep = DEEP, recolor = TUNIC,
-            text = TEXT, line = LINE, fg = PHOS, bg = HUD_BG,
+            text = TEXT, line = LINE, fg = PHOS, bg = HUD_BG, tile = 2 * HH, see = see,
             status = hud():sub(1, STATUS_LEN)}
 end
 
