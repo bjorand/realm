@@ -9,7 +9,8 @@
 -- A click walks, attacks a wolf or talks to a villager; arrows (or ZQSD/WASD)
 -- walk, 1-9 pick in a menu, J opens the quest journal, H drinks a potion,
 -- Space stops fighting, C switches the view between jumping near the edges
--- and following every step, Esc closes a menu or the journal, or quits.
+-- and following every step, F3 shows the frame rate and the network lag,
+-- Esc closes a menu or the journal, or quits.
 --
 -- Copyright (c) 2026 Vendetta 84. All rights reserved. See LICENSE.
 
@@ -119,6 +120,16 @@ local codes = nil        -- the server's tiles: ground code, object code
 local blocked = {}       -- [y * MAP + x]: water or an object
 local bases = {}         -- people's sprites in this scene: "person", "wolf"
 local slotOf = {}        -- sprite name -> store slot
+
+-- F3: frames per second and a graph of the network lag in the top left
+-- corner, made of people: bars 2 to 16 dots high and labels.
+local overlay = false
+local OVERLAY = {"blank", "meter2", "meter4", "meter6", "meter8", "meter10", "meter12",
+                 "meter14", "meter16"}
+local LAG_SAMPLES, LAG_STEP = 16, 20  -- one bar a second, 2 dots per 20 ms
+local lags = {}                       -- the last samples, oldest first; false: lost
+local pingSent, fps = nil, 0
+local reachUp = 0                     -- tallest sprite above its foot, in the store
 local sceneDirty = false
 
 local function walkable(x, y)
@@ -156,6 +167,9 @@ local function wanted()
       seen[n] = true
       list[#list + 1] = n
     end
+  end
+  if overlay then
+    for _, n in ipairs(OVERLAY) do add(n, first) end
   end
   local people = sortedKeys(bases)
   table.insert(people, 1, "person")
@@ -199,7 +213,7 @@ end
 local function buildStore()
   local f = fs.open(libPath)
   local entries, pixels, used = {}, {}, PIXELS
-  slotOf = {}
+  slotOf, reachUp = {}, 0
   for _, n in ipairs(wanted()) do
     local s = lib[n]
     local at, len, flags = s.off, s.w * s.h, 0
@@ -208,6 +222,7 @@ local function buildStore()
       f:seek(at)
       pixels[#pixels + 1] = f:read(len)
       slotOf[n] = #entries
+      reachUp = math.max(reachUp, s.ay)
       entries[#entries + 1] = string.pack("<BBBBI3B", s.w, s.h, s.ax, s.ay, used, flags)
       used = used + len
     end
@@ -389,6 +404,19 @@ end
 
 function handlers.journal(a, rest) journal = rest end
 
+local function addLag(ms)
+  lags[#lags + 1] = ms
+  if #lags > LAG_SAMPLES then table.remove(lags, 1) end
+end
+
+function handlers.pong(a)
+  local t = tonumber(a[1])
+  if t and t == pingSent then
+    addLag(sys.millis() - t)
+    pingSent = nil
+  end
+end
+
 function handlers.say(a, rest) say(rest) end
 
 function handlers.menu(a, rest)
@@ -564,6 +592,30 @@ local function frame()
                        tunic = p.tunic, name = p.name, d = id == myId and -1 or d}
     ::next::
   end
+  if overlay and storeReady and MAP > 0 then
+    -- The video card draws 16-line strips, each with the diagonals that can
+    -- reach it: the bars stay in the strip of lines 32-47 and take its last
+    -- diagonal, so they come after everything drawn there.
+    local depth = math.min(2 * MAP - 2, (camY + 48 + reachUp) // HH + 1)
+    local function put(sprite, sx, sy, tunic, label)
+      local slot = slotOf[sprite]
+      if slot then
+        list[#list + 1] = {sprite = slot, x = camX + sx, y = camY + sy, depth = depth,
+                           tunic = tunic or 0, name = label, d = -2}
+      end
+    end
+    local last = lags[#lags]
+    put("blank", 24, 30, nil, last and (last .. "ms") or "--ms")
+    put("blank", 74, 30, nil, fps .. "fps")
+    for i, ms in ipairs(lags) do
+      local h, rgb = 16, "e04040"
+      if ms then
+        h = math.min(16, math.max(2, 2 * ((ms + LAG_STEP - 1) // LAG_STEP)))
+        rgb = ms < 80 and "40c060" or ms < 200 and "e0c040" or "e04040"
+      end
+      put("meter" .. h, 8 + 4 * (i - 1), 47, tunicOf(rgb))
+    end
+  end
   if #list > MAX_PEOPLE then
     table.sort(list, function(a, b) return a.d < b.d end)
     for i = #list, MAX_PEOPLE + 1, -1 do list[i] = nil end
@@ -605,7 +657,7 @@ end
 mouse.show(true)
 
 local last, quit = sys.millis(), false
-local lastWalk = 0
+local lastWalk, lastPing, ticks, ticksAt = 0, 0, 0, sys.millis()
 while not quit do
   local now = sys.millis()
   if not sock and now >= nextTry then
@@ -636,6 +688,9 @@ while not quit do
       send("use potion")
     elseif ch == "j" then
       journalOpen = not journalOpen
+    elseif e.type == "key" and e.key == "f3" then
+      overlay = not overlay
+      sceneDirty = true  -- the graph's sprites come into the store
     elseif ch == " " or (e.type == "key" and e.key == "space") then
       target = nil
       send("peace")
@@ -659,6 +714,21 @@ while not quit do
     end
     for _, p in pairs(ents) do advance(p) end
     frameCamera(false)
+    ticks = ticks + 1
+  end
+  if now - ticksAt >= 1000 then
+    fps, ticks, ticksAt = ticks * 1000 // (now - ticksAt), 0, now
+  end
+  -- A ping a second while the graph shows; one unanswered for 3 s is lost.
+  if overlay and sock and myId and now - lastPing >= 1000 then
+    if pingSent and now - pingSent >= 3000 then
+      addLag(false)
+      pingSent = nil
+    end
+    if not pingSent then
+      pingSent, lastPing = now, now
+      send("ping %d", now)
+    end
   end
   frame()
   sys.yield()

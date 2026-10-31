@@ -33,6 +33,9 @@ video card V4 (`iso.info`) shows every sprite variant and up to 64 people.
   or talks to a villager; arrows (or ZQSD/WASD) walk.
 - 1-9 pick in a menu, Esc closes it. J opens the quest journal, H drinks
   a potion, Space stops fighting, C switches the camera, Esc quits.
+- F3 shows the frame rate and, in the top left corner, a graph of the
+  network lag over the last 16 seconds (a bar a second, 2 dots per 20 ms;
+  green under 80 ms, yellow under 200 ms, red above or lost).
 - Ada, on the square, asks for 5 wolves; Tom, in the house north east of
   the square, sells potions and a sword and buys pelts.
 

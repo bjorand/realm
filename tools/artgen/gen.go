@@ -468,3 +468,29 @@ func Gen(p *Palette, dir string) error {
 	fmt.Printf("%s: %d generated sprites\n", dir, len(gens))
 	return nil
 }
+
+// The bars of the F3 graph: people sprites 3 dots wide and 2 to 16 high
+// with a dark outline,
+// in the tunic colors so that each bar takes its own color, and a blank
+// sprite that only carries a label.
+func init() {
+	for h := 2; h <= 16; h += 2 {
+		gens[fmt.Sprintf("meter%d", h)] = func(c *canvas) {
+			c.s.Kind = "person"
+			for y := 0; y < h; y++ {
+				c.set(-2, -y, "line")
+				c.set(-1, -y, "tunic")
+				c.set(0, -y, "tunic")
+				c.set(1, -y, "tunic_d")
+				c.set(2, -y, "line")
+			}
+			for x := -2; x <= 2; x++ {
+				c.set(x, -h, "line") // dark outline: readable on any ground
+			}
+		}
+	}
+	gens["blank"] = func(c *canvas) {
+		c.s.Kind = "person"
+		c.set(0, 0, "line")
+	}
+}
