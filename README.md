@@ -39,7 +39,9 @@ realm opens on a splash screen with its version on the bottom row, for
 2.5 seconds or until a key or a click.
 
 - A click walks, attacks a wolf (auto-attack every 1.5 s while next to it)
-  or talks to a villager; arrows (or ZQSD/WASD) walk.
+  or talks to a villager; arrows (or ZQSD/WASD) walk. Players are seen
+  punching, or raising and swinging the sword once they own one (the
+  sword's swing needs a realm server that names the weapon in its hits).
 - 1-9 pick in a menu, Esc closes it. J opens the quest journal, H drinks
   a potion, T lights or puts out a torch, Space stops fighting, C switches the camera, Esc quits.
 - F3 shows the frame rate and, in the top left corner, a graph of the

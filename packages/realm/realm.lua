@@ -6,7 +6,8 @@
 --
 --   realm [host[:port]] [name]   both are remembered for the next time
 --
--- A click walks, attacks a wolf or talks to a villager; arrows (or ZQSD/WASD)
+-- A click walks, attacks a wolf (players punch, or swing the sword once they
+-- own one) or talks to a villager; arrows (or ZQSD/WASD)
 -- walk, 1-9 pick in a menu, J opens the quest journal, H drinks a potion,
 -- T lights or puts out a torch, Space stops fighting, C switches the view
 -- between jumping near the edges
@@ -19,7 +20,7 @@
 --
 -- Copyright (c) 2026 Vendetta 84. All rights reserved. See LICENSE.
 
-local VERSION = "0.8.1"  -- the version in package.lua, shown on the splash screen
+local VERSION = "0.9.0"  -- the version in package.lua, shown on the splash screen
 local PROTOCOL = 2
 local PORT = 7878
 local HW, HH = 16, 16  -- half a ground diamond: square, as in Ultima Online
@@ -250,6 +251,7 @@ local function wanted()
     add(b .. "/1", frames)
     add(b .. "/2", frames)
   end
+  for f = 3, 5 do add("person/" .. f, frames) end  -- punch, sword raised, slash
   for code = 0, ntiles - 1 do add(tileset[code], variants) end
   local function size(n)
     local s = lib[n]
@@ -439,8 +441,24 @@ function handlers.hp(a)
   if p then setHP(p, tonumber(a[2]), tonumber(a[3])) end
 end
 
+-- Swings: the frames of each weapon, each until its millisecond.
+local SWINGS = {fist = {{3, 200}}, sword = {{4, 120}, {5, 320}}}
+
+-- Starts p's swing at the target with the weapon the server names (servers
+-- before it only tell the player's own one) and turns p toward the target.
+local function swing(p, t, weapon)
+  if not SWINGS[weapon] then return end
+  p.swing = {at = sys.millis(), weapon = weapon}
+  local dx, dy = t.tx - p.tx, t.ty - p.ty
+  if dx ~= dy then p.left = dx - dy < 0 end
+end
+
 function handlers.hit(a)
   local src, dst, dmg = tonumber(a[1]), tonumber(a[2]), tonumber(a[3])
+  local p, t = ents[src], ents[dst]
+  if p and t and p.kind == "player" then
+    swing(p, t, a[4] or (src == myId and me.weapon) or "fist")
+  end
   if src ~= myId and dst ~= myId then return end
   if dmg == 0 then
     say(string.format("%s misses %s.", nameOf(src), nameOf(dst)), 2000)
@@ -666,10 +684,21 @@ local function hud()
                        me.weapon and "  Sword" or "", torch, quest, fight)
 end
 
--- Sprite names by sprite and walking frame, built once.
+-- The frame of p's swing at now, and how far it leans in, in dots; nil when
+-- it is over.
+local function swingFrame(p, now)
+  local s = p.swing
+  local ms = now - s.at
+  for i, step in ipairs(SWINGS[s.weapon]) do
+    if ms < step[2] then return step[1], i == #SWINGS[s.weapon] and 2 or 0 end
+  end
+  p.swing = nil
+end
+
+-- Sprite names by sprite and frame (walking, then swings), built once.
 local spriteNames = setmetatable({}, {__index = function(t, sprite)
   local names = {}
-  for f = 0, 2 do names[f] = sprite .. "/" .. f end
+  for f = 0, 5 do names[f] = sprite .. "/" .. f end
   t[sprite] = names
   return names
 end})
@@ -677,13 +706,20 @@ end})
 local function frame()
   local list = {}
   local p0 = myId and ents[myId]
+  local now = sys.millis()
   for id, p in pairs(ents) do
-    local f = 0
+    local f, lean, x, y = 0, 0, footX(p), footY(p)
     if p.step > 0 then f = 1 + (p.x + p.y + p.step * 2 // STEPS) % 2 end
+    if p.swing then
+      local sf, l = swingFrame(p, now)
+      if sf and slotOf[spriteNames.person[sf]] then f, lean = sf, l end
+    end
+    -- The strike leans the way p faces, on the screen only.
+    if p.left then x = x - lean else x = x + lean end
     local d = p0 and math.max(math.abs(p.x - p0.x), math.abs(p.y - p0.y)) or 0
     local sprite = resolve(spriteNames[p.sprite][f]) or resolve(spriteNames.person[f])
     if not storeReady or not sprite then goto next end
-    list[#list + 1] = {sprite = sprite, x = footX(p), y = footY(p),
+    list[#list + 1] = {sprite = sprite, x = x, y = y,
                        depth = math.max(p.x + p.y, p.tx + p.ty), flip = p.left,
                        tunic = p.tunic, name = p.name, d = id == myId and -1 or d}
     ::next::
