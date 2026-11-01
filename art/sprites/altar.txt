@@ -1,0 +1,26 @@
+# The altar on the village square, a golden ankh on a stone block: ghosts
+# who reach it come back to life.
+name altar
+kind object
+anchor 8 18
+---
+......DDDD......
+.....DSSSSD.....
+....DSTDDSSD....
+....DSD..DSD....
+....DSD..DSD....
+.....DSDDSD.....
+..DDDDSSSSDDDD..
+..DSSSSSSSSSTD..
+..DDDDTSSTDDDD..
+......DSTD......
+......DSTD......
+..DDDDDDDDDDDD..
+.DllllllllllllD.
+.DljjjjjjjjjjkD.
+.DljjjjjjjjjjkD.
+.DljjjjjjjjjjkD.
+.DkkkkkkkkkkkkD.
+.DDDDDDDDDDDDDD.
+%%%%%%%%%%%%%%%%
+.%%%%%%%%%%%%%%.

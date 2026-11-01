@@ -7,7 +7,8 @@
 --   realm [host[:port]] [name]   both are remembered for the next time
 --
 -- A click walks, attacks a monster (players punch, or swing their blade once
--- they own one) or talks to a villager; arrows (or ZQSD/WASD)
+-- they own one), talks to a villager, opens a dead player's body or reads a
+-- resurrection scroll over a ghost; arrows (or ZQSD/WASD)
 -- walk, 1-9 pick in a menu, J opens the quest journal, H drinks a potion,
 -- T lights or puts out a torch, I (or a click on the bag in the corner)
 -- opens the bag (a click on a piece of gear puts it on), E what you wear
@@ -17,13 +18,17 @@
 -- and following every step, F3 shows the frame rate and the network lag,
 -- Esc closes a menu, the journal or the bag, or quits.
 --
+-- The dead walk as ghosts, as in Ultima Online: their bag and gold stay on
+-- their body, which anyone may loot, until the altar on the square or a
+-- friend's scroll brings them back to life.
+--
 -- The server keeps the time of day: the world darkens to a blue night and
 -- warms at dawn and dusk (the palette is dimmed, the text is not). On the
 -- video card V6, the torches people carry light the dark around them.
 --
 -- Copyright (c) 2026 Vendetta 84. All rights reserved. See LICENSE.
 
-local VERSION = "0.14.0"  -- the version in package.lua, shown on the splash screen
+local VERSION = "0.15.0"  -- the version in package.lua, shown on the splash screen
 local PROTOCOL = 2
 local PORT = 7878
 local HW, HH = 16, 16  -- half a ground diamond: square, as in Ultima Online
@@ -206,7 +211,7 @@ local BAG_SPRITES = {"blank", "bag", "slot", "item-gold", "item-sword", "item-po
                      "item-torch", "item-match", "item-pelt", "item-misc", "item-dagger",
                      "item-axe", "item-graveblade", "item-cap", "item-helm", "item-jerkin",
                      "item-chainmail", "item-buckler", "item-shield", "item-boots",
-                     "item-ironboots", "item-copperring", "item-goldring"}
+                     "item-ironboots", "item-copperring", "item-goldring", "item-scroll"}
 local LAG_SAMPLES, LAG_STEP = 16, 20  -- one bar a second, 2 dots per 20 ms
 local lags = {}                       -- the last samples, oldest first; false: lost
 local pingSent, fps = nil, 0
@@ -371,7 +376,7 @@ end
 
 -- Monsters are whatever is not a person: wolves, skeletons, the boss and
 -- kinds of later servers.
-local PEOPLE = {player = true, npc = true, merchant = true}
+local PEOPLE = {player = true, npc = true, merchant = true, corpse = true}
 local function isMonster(p) return p and not PEOPLE[p.kind] end
 
 local function setHP(p, hp, maxhp)
@@ -386,7 +391,7 @@ end
 
 -- ------------------------------------------------------------------- game
 
-local me = {hp = 0, maxhp = 0, gold = 0, inv = {}, weapon = nil,
+local me = {hp = 0, maxhp = 0, gold = 0, inv = {}, weapon = nil, ghost = false,
             quest = "none", kills = 0, need = 0,
             level = nil, xp = 0, next = 0, points = 0, attr = {}, dmg = {0, 0}, hit = 0, armor = 0,
             gear = nil}  -- gear: the item in each slot, from servers with slots
@@ -428,7 +433,7 @@ local function disconnect(why)
   if sock then sock:close() end
   sock, inbuf, ents, myId, target, menu, clock = nil, "", {}, nil, nil, nil, nil
   typing = nil
-  bagSeen = false
+  bagSeen, me.ghost = false, false
   say(why, 5000)
   nextTry = sys.millis() + 5000
 end
@@ -467,6 +472,23 @@ function handlers.die(a)
   local id = tonumber(a[1])
   if target == id then target = nil end
   if id == myId then sound.play("die:d=8,o=4,b=160:g,e,c") end
+end
+
+-- A player became a ghost (1) or lives again (0), on servers with ghosts.
+-- Ghosts are drawn as a pale sheet, or as themselves with an old library.
+function handlers.ghost(a)
+  local id, p = tonumber(a[1]), ents[tonumber(a[1])]
+  if not p then return end
+  p.ghost = a[2] == "1"
+  p.sprite = p.ghost and lib["ghost/0"] and "ghost" or "person"
+  if p.ghost and not bases.ghost then
+    bases.ghost = true
+    sceneDirty = true
+  end
+  if id == myId then
+    if not p.ghost and me.ghost then sound.play("alive:d=8,o=5,b=160:c,e,g,c6") end
+    me.ghost = p.ghost
+  end
 end
 
 function handlers.hp(a)
@@ -716,6 +738,29 @@ local function personAt(mx, my)
   return bestId, best
 end
 
+-- The object on a tile, by its sprite name: "altar".
+local function objectAt(x, y)
+  if not codes or x < 0 or y < 0 or x >= MAP or y >= MAP then return nil end
+  local o = codes:byte(2 * (y * MAP + x) + 2)
+  return o ~= NONE and tileset[o & 127] or nil
+end
+
+-- The walkable tile next to (x, y) nearest to the player, or nil.
+local function besideOf(x, y)
+  local p = ents[myId]
+  local best, bx, by
+  for dy = -1, 1 do
+    for dx = -1, 1 do
+      local nx, ny = x + dx, y + dy
+      if walkable(nx, ny) then
+        local d = math.max(math.abs(nx - p.tx), math.abs(ny - p.ty))
+        if not best or d < best then best, bx, by = d, nx, ny end
+      end
+    end
+  end
+  return bx, by
+end
+
 local function clickTo(mx, my)
   if my >= VIEW_H or not myId then return end
   -- Inverse of the projection: a = x - y, b = x + y.
@@ -723,10 +768,13 @@ local function clickTo(mx, my)
   local x, y = math.floor((a + b) / 2 + .5), math.floor((b - a) / 2 + .5)
   local id, p = personAt(mx, my)
   if not p then id, p = entityAt(x, y) end
-  if isMonster(p) then
+  if me.ghost and not walkable(x, y) and objectAt(x, y) == "altar" then
+    x, y = besideOf(x, y)  -- the altar brings back the ghosts beside it
+    if x then send("go %d %d", x, y) end
+  elseif isMonster(p) then
     target = id
     send("attack %d", id)
-  elseif p and (p.kind == "npc" or p.kind == "merchant") then
+  elseif p and (p.kind == "npc" or p.kind == "merchant" or p.kind == "corpse" or p.ghost) then
     send("talk %d", id)
   elseif walkable(x, y) then
     send("go %d %d", x, y)
@@ -789,6 +837,10 @@ local function hud()
   local torch = p and p.lit and "  Torch lit" or ""
   local level = me.level and (" Lv" .. me.level) or ""
   if me.points > 0 then level = string.format("%s  +%d point: P", level, me.points) end
+  if me.ghost then
+    return string.format("%s%s%s  GHOST  Walk to the altar on the square, or find a friend with a scroll.",
+                         name, level, time)
+  end
   return string.format("%s%s%s  HP %d/%d  Gold %d  Potions %d%s  %s%s  H: potion  T: torch  I: bag  E: gear  P: sheet  J: journal",
                        name, level, time, me.hp, me.maxhp, me.gold, me.inv.potion or 0, torch, quest, fight)
 end
@@ -799,12 +851,13 @@ end
 -- diagonal, so it comes after everything drawn there. A slot is 24 dots
 -- wide, the item on the left and its count on the right; the button 16.
 local BAG_COLS, BAG_ROWS, SLOT, SLOT_W = 4, 3, 16, 24
-local BAG_ORDER = {"potion", "torch", "match", "pelt"}  -- after gold and the weapon
+local BAG_ORDER = {"potion", "scroll", "torch", "match", "pelt"}  -- after gold and the weapon
 local BAG_ABOUT = {
   gold = "Gold. Tom sells potions, torches and matches, Bram the smith gear.",
   sword = "Your sword: it hits harder than fists.",
   graveblade = "The grave blade, taken from the Revenant: the best blade there is.",
   pelt = "Wolf pelts. Tom buys them.",
+  scroll = "Resurrection scrolls: click a ghost to bring it back to life.",
 }
 local BAG_USE = {potion = "use potion", torch = "use torch", match = "use torch"}
 

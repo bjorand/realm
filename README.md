@@ -40,8 +40,9 @@ it shines through them.
 realm opens on a splash screen with its version on the bottom row, for
 2.5 seconds or until a key or a click.
 
-- A click walks, attacks a monster (auto-attack every 1.5 s while next to it)
-  or talks to a villager; arrows (or ZQSD/WASD) walk. Players are seen
+- A click walks, attacks a monster (auto-attack every 1.5 s while next to it),
+  talks to a villager, opens a dead player's body or reads a resurrection
+  scroll over a ghost; arrows (or ZQSD/WASD) walk. Players are seen
   punching, or raising and swinging the sword once they own one (the
   sword's swing needs a realm server that names the weapon in its hits).
 - E opens what you wear, in the top right corner: six slots (weapon,
@@ -74,9 +75,18 @@ realm opens on a splash screen with its version on the bottom row, for
   anyone's) lights about 3 tiles around it; it burns 10 minutes, each
   lighting takes a match, and putting it out keeps the rest for later.
 - Ada, on the square, asks for 5 wolves; Tom, in the house north east of
-  the square, sells potions, torches and matches and buys pelts; Bram the
+  the square, sells potions, torches, matches and resurrection scrolls and
+  buys pelts; Bram the
   smith, in the south west house, sells weapons, armor, shields, boots and
   rings and buys gear back at half price.
+- Death is as in Ultima Online: your bag and gold stay on your body, and
+  you walk on as a ghost (a pale sheet), still wearing your gear. Monsters
+  ignore you, you cannot fight nor trade, and the living only hear you
+  moan. Walk to the golden ankh on the square (a click on it walks beside
+  it), or have a friend read a resurrection scroll (Tom sells them) beside
+  you, to live again; then go back for your body before someone else loots
+  it: anyone may, and it turns to dust after 15 minutes. Needs a realm
+  server with ghosts.
 - At night (21:00-5:00) skeletons walk the graveyard in the north east
   woods, at the end of the trail from the north road. At midnight their
   lord, the Revenant, rises: half as big again as them, he calls them to

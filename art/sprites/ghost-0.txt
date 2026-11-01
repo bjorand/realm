@@ -1,0 +1,29 @@
+# A ghost, standing: a pale sheet fading into the air,
+# floating over its shadow (12x19 at 2x). Dead players walk as ghosts until
+# brought back to life.
+name ghost/0
+kind person
+scale 2
+anchor 12 44
+shadow 0 0 9 2
+legend o=bone_d Z=cloth_l e=line
+---
+....oooo....
+..ooZZZZoo..
+.oZZZZZZZZo.
+.oZZZZZZZZo.
+oZZeeZZeeZZo
+oZZeeZZeeZZo
+oZZZZZZZZZZo
+oZZZZeeZZZZo
+oZZZZeeZZZZo
+oZ.Z.Z.Z.Z.o
+o.Z.Z.Z.Z.Zo
+oZ.Z.Z.Z.Z.o
+o.Z.Z.Z.Z.Zo
+oZ.Z.Z.Z.Z.o
+.oZ.Z.Z.Z.o.
+.oZ.ZZZZ.Zo.
+..Z.Z..Z.Z..
+..Z....Z....
+...Z...Z....

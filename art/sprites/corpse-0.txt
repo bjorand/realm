@@ -1,0 +1,16 @@
+# A dead player's body, lying on its back, until it turns to dust (20x8 at
+# 2x). Its tunic takes the player's color.
+name corpse/0
+kind person
+scale 2
+anchor 20 13
+legend o=line C=hair B=skin G=tunic H=tunic_d F=pants E=boots
+---
+..oooo..............
+.oCCCCo.ooooooo.....
+oCBBBBCoGGGGGGHoooo.
+oCBoBoBoGGGGGGHFFoEo
+oCBBBBCoGGGGGGHFFoEo
+.oCBBCo.oHHHHHoFFoEo
+..oooo...ooooo.oooo.
+.%%%%%%%%%%%%%%%%%%%

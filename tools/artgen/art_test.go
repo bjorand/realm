@@ -90,9 +90,10 @@ func TestRLE(t *testing.T) {
 	}
 }
 
-// What every scene needs fits one store: each person's frames and every
-// ground and object but their variants ("tree/1"), which the game leaves
-// out when the store is full. Each sprite reads back.
+// What every scene needs fits one store: each person standing, every
+// ground and object, the bag and the meters, but not the walk and swing
+// frames or the variants ("tree/1", "wolf/2"), which the game packs after
+// them and leaves out when the store is full. Each sprite reads back.
 func TestStore4(t *testing.T) {
 	p, all, err := load("../../art")
 	if err != nil {
@@ -100,7 +101,7 @@ func TestStore4(t *testing.T) {
 	}
 	var sprites []*Sprite
 	for _, s := range all {
-		if s.Kind == "person" || !variant.MatchString(s.Name) {
+		if !variant.MatchString(s.Name) {
 			sprites = append(sprites, s)
 		}
 	}
