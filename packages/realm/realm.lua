@@ -8,9 +8,14 @@
 --
 -- A click walks, attacks a wolf or talks to a villager; arrows (or ZQSD/WASD)
 -- walk, 1-9 pick in a menu, J opens the quest journal, H drinks a potion,
--- Space stops fighting, C switches the view between jumping near the edges
+-- T lights or puts out a torch, Space stops fighting, C switches the view
+-- between jumping near the edges
 -- and following every step, F3 shows the frame rate and the network lag,
 -- Esc closes a menu or the journal, or quits.
+--
+-- The server keeps the time of day: the world darkens to a blue night and
+-- warms at dawn and dusk (the palette is dimmed, the text is not). On the
+-- video card V6, the torches people carry light the dark around them.
 --
 -- Copyright (c) 2026 Vendetta 84. All rights reserved. See LICENSE.
 
@@ -42,8 +47,9 @@ local name = store.get("realm_name", "")
 -- player show through a circle around them, and keeps 128 sprites in a
 -- 48 KB store: the ones this scene needs are packed into it, the people
 -- and plain sprites first, then the variants ("tree/1") that fit; a
--- variant left out is drawn as its "/0".
-local STORE, PIXELS, MAX_SPRITES  -- from iso.info()
+-- variant left out is drawn as its "/0". V6 also draws the view outside
+-- the lights in night colors, kept at DARK in the store.
+local STORE, PIXELS, MAX_SPRITES, DARK  -- from iso.info(); DARK: nil before V6
 local MAP_BYTES = 8192
 local SEE_R = 34  -- the see-through circle around the player's body
 
@@ -74,12 +80,14 @@ local function openLibrary()
     error("realm needs the video card V5: flash both boards with the firmware of 2026-10-31 on")
   end
   STORE, PIXELS, MAX_SPRITES, MAX_PEOPLE = info.store, info.pixels, info.sprites, info.people
+  DARK = info.light and info.dark
 end
 
 -- Tunics: each color the server gives a person gets two palette entries
 -- from 64 on, the color and its shade.
 local tunicList, tunicSlot = {}, {}
 local storeReady = false
+local lightLevel = nil  -- the light of the store's palette (see palette)
 
 local function shadeOf(c)
   local r, g, b = c >> 16, c >> 8 & 0xFF, c & 0xFF
@@ -97,22 +105,74 @@ local function tunicOf(rgb)
   tunicList[#tunicList + 1] = c
   local tunic = TUNICS + 2 * (#tunicList - 1)
   tunicSlot[rgb] = tunic
-  if storeReady then
-    -- Rare after login: each call sends the whole store again.
-    iso.color(tunic, c)
-    iso.color(tunic + 1, shadeOf(c))
-  end
+  -- Rare after login: the main loop sends the palette again, lit.
+  if storeReady then lightLevel = nil end
   return tunic
 end
 
-local function palette()
+-- Day and night: the time of day from the server (minutes since midnight;
+-- nil before it tells, then it is always day) lights the palette. Each key
+-- is a minute and the red, green and blue light in sixteenths, between
+-- which the light goes linearly.
+local clock = nil
+local NIGHT = {6, 7, 11}
+local LIGHT = {{0, NIGHT}, {300, NIGHT}, {360, {16, 13, 11}}, {420, {16, 16, 16}},
+               {1140, {16, 16, 16}}, {1200, {16, 12, 10}}, {1260, NIGHT}, {1440, NIGHT}}
+local LIT = {[LINE] = true, [TEXT] = true, [HUD_BG] = true, [PHOS] = true}  -- never dimmed
+
+local function light()
+  if not clock then return 16, 16, 16 end
+  for i = 2, #LIGHT do
+    local m1, a, m2, b = LIGHT[i - 1][1], LIGHT[i - 1][2], LIGHT[i][1], LIGHT[i][2]
+    if clock < m2 then
+      local function mix(j) return (a[j] * (m2 - clock) + b[j] * (clock - m1) + (m2 - m1) // 2) // (m2 - m1) end
+      return mix(1), mix(2), mix(3)
+    end
+  end
+  return table.unpack(NIGHT)
+end
+
+local function lightKey()
+  local r, g, b = light()
+  return r << 10 | g << 5 | b
+end
+
+local function dim(c, r, g, b)
+  return ((c >> 11) * r // 16) << 11 | ((c >> 5 & 0x3F) * g // 16) << 5 | (c & 0x1F) * b // 16
+end
+
+-- The palette lit by r, g, b sixteenths.
+local function colors(r, g, b)
   local pal = {string.unpack(string.rep("<I2", 128), libPal)}
   pal[129] = nil  -- the position string.unpack returns
   for i, c in ipairs(tunicList) do
     pal[TUNICS + 2 * i - 1] = rgb565(c)
     pal[TUNICS + 2 * i] = rgb565(shadeOf(c))
   end
+  for i = 1, 127 do
+    if not LIT[i] then pal[i + 1] = dim(pal[i + 1], r, g, b) end
+  end
   return string.pack(string.rep("<I2", 128), table.unpack(pal))
+end
+
+-- Torches: on V6 the store's colors are those of torchlight while it is
+-- not full day, and the night colors those of the hour; the card draws the
+-- view outside the lights with the night colors. Before V6 the whole view
+-- takes the colors of the hour.
+local TORCH = {16, 15, 13}  -- warm light
+local TORCH_R = 100         -- world dots, about 3 tiles
+local function night() return DARK and lightKey() ~= 16 << 10 | 16 << 5 | 16 end
+
+local function palette()
+  if night() then return colors(table.unpack(TORCH)) end
+  return colors(light())
+end
+
+-- Sends the colors of the hour to the store.
+local function applyLight()
+  iso.load(palette())
+  if night() then iso.load(colors(light()), DARK) end
+  lightLevel = lightKey()
 end
 
 -- ------------------------------------------------------------------ world
@@ -235,6 +295,7 @@ local function buildStore()
   end
   local store = palette() .. tableOf(1, 64) .. string.rep("\255", MAP_BYTES) .. tableOf(65, 128)
   iso.load(store .. table.concat(pixels))
+  applyLight()
   storeReady = true
   if codes then iso.map(MAP, MAP, remap()) end
   sceneDirty = false
@@ -250,7 +311,7 @@ local function person(kind, sprite, name, x, y, color)
     sceneDirty = true
   end
   return {kind = kind, sprite = sprite, base = name, name = name, x = x, y = y, tx = x, ty = y,
-          step = 0, left = false, tunic = tunicOf(color), hp = 0, maxhp = 0}
+          step = 0, left = false, tunic = tunicOf(color), hp = 0, maxhp = 0, lit = false}
 end
 
 -- Foot point in world dots.
@@ -327,7 +388,7 @@ end
 
 local function disconnect(why)
   if sock then sock:close() end
-  sock, inbuf, ents, myId, target, menu = nil, "", {}, nil, nil, nil
+  sock, inbuf, ents, myId, target, menu, clock = nil, "", {}, nil, nil, nil, nil
   say(why, 5000)
   nextTry = sys.millis() + 5000
 end
@@ -404,6 +465,11 @@ end
 
 function handlers.journal(a, rest) journal = rest end
 
+function handlers.time(a)
+  local m = tonumber(a[1])
+  if m and m >= 0 and m < 1440 then clock = m end
+end
+
 local function addLag(ms)
   lags[#lags + 1] = ms
   if #lags > LAG_SAMPLES then table.remove(lags, 1) end
@@ -415,6 +481,11 @@ function handlers.pong(a)
     addLag(sys.millis() - t)
     pingSent = nil
   end
+end
+
+function handlers.light(a)
+  local p = ents[tonumber(a[1])]
+  if p then p.lit = a[2] == "1" end
 end
 
 function handlers.say(a, rest) say(rest) end
@@ -573,9 +644,16 @@ local function hud()
   local fight = ""
   local t = target and ents[target]
   if t then fight = string.format("  Fighting %s %d/%d", t.base, t.hp, t.maxhp) end
-  return string.format("%s  HP %d/%d  Gold %d  Potions %d%s  %s%s  H: potion  J: journal  Click: walk/fight/talk",
-                       name, me.hp, me.maxhp, me.gold, me.inv.potion or 0,
-                       me.weapon and "  Sword" or "", quest, fight)
+  local time = clock and string.format("  %02d:%02d", clock // 60, clock % 60) or ""
+  local p, torch = ents[myId], ""
+  if p and p.lit then
+    torch = "  Torch lit"
+  elseif (me.inv.torch or 0) > 0 or (me.inv.match or 0) > 0 then
+    torch = string.format("  Torches %d Matches %d", me.inv.torch or 0, me.inv.match or 0)
+  end
+  return string.format("%s%s  HP %d/%d  Gold %d  Potions %d%s%s  %s%s  H: potion  T: torch  J: journal",
+                       name, time, me.hp, me.maxhp, me.gold, me.inv.potion or 0,
+                       me.weapon and "  Sword" or "", torch, quest, fight)
 end
 
 local function frame()
@@ -620,6 +698,19 @@ local function frame()
     table.sort(list, function(a, b) return a.d < b.d end)
     for i = #list, MAX_PEOPLE + 1, -1 do list[i] = nil end
   end
+  -- The torches, the nearest first.
+  local lights = {}
+  if night() then
+    local lit = {}
+    for id, p in pairs(ents) do
+      if p.lit then
+        local d = p0 and math.max(math.abs(p.x - p0.x), math.abs(p.y - p0.y)) or 0
+        lit[#lit + 1] = {x = footX(p), y = footY(p) - 20, r = TORCH_R, d = id == myId and -1 or d}
+      end
+    end
+    table.sort(lit, function(a, b) return a.d < b.d end)
+    for i = 1, math.min(#lit, 8) do lights[i] = lit[i] end
+  end
   -- Trees and walls in front of the player let them show through.
   local see
   if p0 then
@@ -628,7 +719,7 @@ local function frame()
   end
   iso.frame{x = camX, y = camY, people = list, deep = DEEP, recolor = TUNIC,
             text = TEXT, line = LINE, fg = PHOS, bg = HUD_BG, tile = 2 * HH, see = see,
-            status = hud():sub(1, STATUS_LEN)}
+            night = night() or nil, lights = lights, status = hud():sub(1, STATUS_LEN)}
 end
 
 -- Asks for a name on the status line until a valid one is typed.
@@ -672,6 +763,8 @@ while not quit do
   end
   pump()
   if sceneDirty and codes then buildStore() end
+  -- The light changes a few dozen times a day: only the colors go again.
+  if storeReady and lightLevel ~= lightKey() then applyLight() end
 
   local e = key.poll()
   while e do
@@ -692,6 +785,8 @@ while not quit do
       frameCamera(true)
     elseif ch == "h" then
       send("use potion")
+    elseif ch == "t" then
+      send("use torch")
     elseif ch == "j" then
       journalOpen = not journalOpen
     elseif e.type == "key" and e.key == "f3" then

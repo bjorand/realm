@@ -30,18 +30,25 @@ tall walls, and trees or walls in front of the player letting it show
 through a dithered circle. This needs the video card V5: flash both boards
 with the HDMI firmware of 2026-10-31 on (the test pattern reads
 `TERMINA VIDEO 640x480 V5`); on an older card realm stops with a message.
+Torchlight needs the V6 card (firmware 1.1.0 on both boards, test pattern
+`TERMINA VIDEO 640x480 V6`): on V5 the night is just darker everywhere.
 
 ## Playing
 
 - A click walks, attacks a wolf (auto-attack every 1.5 s while next to it)
   or talks to a villager; arrows (or ZQSD/WASD) walk.
 - 1-9 pick in a menu, Esc closes it. J opens the quest journal, H drinks
-  a potion, Space stops fighting, C switches the camera, Esc quits.
+  a potion, T lights or puts out a torch, Space stops fighting, C switches the camera, Esc quits.
 - F3 shows the frame rate and, in the top left corner, a graph of the
   network lag over the last 16 seconds (a bar a second, 2 dots per 20 ms;
   green under 80 ms, yellow under 200 ms, red above or lost).
+- The server keeps the time of day, shown after your name on the status
+  line: a day lasts 24 minutes, nights (21:00-5:00) are dark and blue, dawn
+  and dusk warm. Names and the status line stay lit. A lit torch (yours or
+  anyone's) lights about 3 tiles around it; it burns 10 minutes, each
+  lighting takes a match, and putting it out keeps the rest for later.
 - Ada, on the square, asks for 5 wolves; Tom, in the house north east of
-  the square, sells potions and a sword and buys pelts.
+  the square, sells potions, torches, matches and a sword and buys pelts.
 
 ## Files
 
