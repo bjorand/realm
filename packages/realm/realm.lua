@@ -10,7 +10,8 @@
 -- own one) or talks to a villager; arrows (or ZQSD/WASD)
 -- walk, 1-9 pick in a menu, J opens the quest journal, H drinks a potion,
 -- T lights or puts out a torch, I (or a click on the bag in the corner)
--- opens the bag, Space stops fighting, C switches the view
+-- opens the bag, Enter says something to everyone (over your head), Space
+-- stops fighting, C switches the view
 -- between jumping near the edges
 -- and following every step, F3 shows the frame rate and the network lag,
 -- Esc closes a menu, the journal or the bag, or quits.
@@ -21,7 +22,7 @@
 --
 -- Copyright (c) 2026 Vendetta 84. All rights reserved. See LICENSE.
 
-local VERSION = "0.10.0"  -- the version in package.lua, shown on the splash screen
+local VERSION = "0.11.0"  -- the version in package.lua, shown on the splash screen
 local PROTOCOL = 2
 local PORT = 7878
 local HW, HH = 16, 16  -- half a ground diamond: square, as in Ultima Online
@@ -384,6 +385,8 @@ local notice, noticeUntil = nil, 0
 local bagOpen = false
 local bagSeen = false                  -- the first inv after login is no pickup
 local pickup, pickupUntil = nil, 0     -- "+1 pelt" beside the bag button
+local typing = nil                     -- the chat line being typed; nil: not typing
+local CHAT_LEN = 60                    -- the server cuts longer lines
 
 local function say(text, ms)
   notice, noticeUntil = text, sys.millis() + (ms or 5000)
@@ -406,6 +409,7 @@ end
 local function disconnect(why)
   if sock then sock:close() end
   sock, inbuf, ents, myId, target, menu, clock = nil, "", {}, nil, nil, nil, nil
+  typing = nil
   bagSeen = false
   say(why, 5000)
   nextTry = sys.millis() + 5000
@@ -535,6 +539,37 @@ function handlers.light(a)
 end
 
 function handlers.say(a, rest) say(rest) end
+
+-- Cuts a chat line into lines of at most BUBBLE_W characters, between words
+-- when it can.
+local BUBBLE_W = 24
+local function wrap(text)
+  local lines, line = {}, ""
+  for word in text:gmatch("%S+") do
+    while #word > BUBBLE_W do
+      if line ~= "" then lines[#lines + 1], line = line, "" end
+      lines[#lines + 1], word = word:sub(1, BUBBLE_W), word:sub(BUBBLE_W + 1)
+    end
+    if line == "" then line = word
+    elseif #line + 1 + #word <= BUBBLE_W then line = line .. " " .. word
+    else lines[#lines + 1], line = line, word end
+  end
+  if line ~= "" then lines[#lines + 1] = line end
+  return lines
+end
+
+-- What a player says shows over their head for a while, and on the status
+-- line when someone else said it.
+function handlers.chat(a, rest)
+  local id, text = rest:match("^(%d+) (.+)$")
+  local p = id and ents[tonumber(id)]
+  if not p then return end
+  p.chat = {lines = wrap(text), untilMs = sys.millis() + 4000 + 100 * #text}
+  if tonumber(id) ~= myId then
+    say(p.base .. ": " .. text, 8000)
+    sound.tone(990, 10)
+  end
+end
 
 function handlers.menu(a, rest)
   menu = rest ~= "" and rest or nil
@@ -682,6 +717,7 @@ local function hud()
     if notice then return notice end
     return "VENDETTA REALM  connecting to " .. server .. " as " .. name .. "...  Esc: quit"
   end
+  if typing then return "Say: " .. typing .. "_  Enter: send  Esc: cancel" end
   if menu then return menu .. "  Esc" end
   if journalOpen then
     -- Servers before the journal only tell the quest's state.
@@ -865,6 +901,35 @@ local function frame()
     table.sort(list, function(a, b) return a.d < b.d end)
     for i = #list, MAX_PEOPLE + 1, -1 do list[i] = nil end
   end
+  -- Chat bubbles over the heads, in what is left of the people the card
+  -- draws, the nearest speaker first. A label holds 8 characters: each line
+  -- is made of labels side by side, and the last line sits above the name.
+  if storeReady and slotOf.blank then
+    local speakers = {}
+    for id, p in pairs(ents) do
+      if p.chat and now >= p.chat.untilMs then p.chat = nil end
+      if p.chat then
+        local d = p0 and math.max(math.abs(p.x - p0.x), math.abs(p.y - p0.y)) or 0
+        speakers[#speakers + 1] = {p = p, d = id == myId and -1 or d}
+      end
+    end
+    table.sort(speakers, function(a, b) return a.d < b.d end)
+    for _, sp in ipairs(speakers) do
+      local p, lines = sp.p, sp.p.chat.lines
+      local need = 0
+      for _, l in ipairs(lines) do need = need + (#l + 7) // 8 end
+      if #list + need > MAX_PEOPLE then break end
+      local s = lib[p.sprite .. "/0"] or lib["person/0"]
+      local cx, top = footX(p) - camX, footY(p) - camY - (s and s.ay or 0)
+      for i, l in ipairs(lines) do
+        local x0, y = cx - 3 * #l, top - 11 * (#lines - i + 1)
+        for c = 1, #l, 8 do
+          local chunk = l:sub(c, c + 7)
+          screenLabel(list, x0 + 6 * (c - 1) + 3 * #chunk, y, chunk)
+        end
+      end
+    end
+  end
   -- The torches, the nearest first.
   local lights = {}
   if night() then
@@ -995,7 +1060,22 @@ while not quit do
   while e do
     changed = true
     local ch = e.type == "char" and e.ch:lower()
-    if e.type == "key" and e.key == "esc" then
+    -- While a chat line is typed, the keys write it; a click still plays.
+    if typing and e.type ~= "mouse" then
+      if e.type == "key" and e.key == "esc" then
+        typing = nil
+      elseif e.type == "key" and e.key == "enter" then
+        if typing:match("%S") then send("chat %s", typing) end
+        typing = nil
+      elseif e.type == "key" and e.key == "backspace" then
+        typing = typing:sub(1, -2)
+      elseif e.type == "char" and #e.ch == 1 and e.ch:byte() >= 32 and e.ch:byte() <= 126
+          and #typing < CHAT_LEN then
+        typing = typing .. e.ch
+      end
+    elseif e.type == "key" and e.key == "enter" and sock and myId and not menu then
+      typing = ""
+    elseif e.type == "key" and e.key == "esc" then
       if menu then
         menu = nil
         send("choose 0")
@@ -1039,7 +1119,8 @@ while not quit do
 
   if now - last >= FRAME_MS then
     last = now
-    local dx, dy = heldStep()
+    local dx, dy = 0, 0
+    if not typing then dx, dy = heldStep() end
     if (dx ~= 0 or dy ~= 0) and now - lastWalk >= 150 then
       walkToward(dx, dy)
       lastWalk = now

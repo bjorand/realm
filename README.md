@@ -42,6 +42,9 @@ realm opens on a splash screen with its version on the bottom row, for
   or talks to a villager; arrows (or ZQSD/WASD) walk. Players are seen
   punching, or raising and swinging the sword once they own one (the
   sword's swing needs a realm server that names the weapon in its hits).
+- Enter opens a chat line on the status line (60 characters, Enter sends,
+  Esc cancels): every player sees it over your head for a few seconds, and
+  on their status line. Chat needs a realm server that knows `chat`.
 - 1-9 pick in a menu, Esc closes it. J opens the quest journal, H drinks
   a potion, T lights or puts out a torch, Space stops fighting, C switches the camera, Esc quits.
 - The bag, in the bottom right corner: I or a click opens it. It shows
