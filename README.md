@@ -35,6 +35,9 @@ Torchlight needs the V6 card (firmware 1.1.0 on both boards, test pattern
 
 ## Playing
 
+realm opens on a splash screen with its version on the bottom row, for
+2.5 seconds or until a key or a click.
+
 - A click walks, attacks a wolf (auto-attack every 1.5 s while next to it)
   or talks to a villager; arrows (or ZQSD/WASD) walk.
 - 1-9 pick in a menu, Esc closes it. J opens the quest journal, H drinks
@@ -116,5 +119,6 @@ To check the package before pushing, from a termina-packages checkout:
 go run ./tools/mkindex -packages ../realm/packages
 ```
 
-A release is a push to `main` with a new `version` in `package.lua`: the
-CI refuses changed files under an already published version.
+A release is a push to `main` with a new `version` in `package.lua` (and
+the same `VERSION` at the top of `realm.lua`, shown on the splash screen):
+the CI refuses changed files under an already published version.

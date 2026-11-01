@@ -19,6 +19,7 @@
 --
 -- Copyright (c) 2026 Vendetta 84. All rights reserved. See LICENSE.
 
+local VERSION = "0.8.0"  -- the version in package.lua, shown on the splash screen
 local PROTOCOL = 2
 local PORT = 7878
 local HW, HH = 16, 16  -- half a ground diamond: square, as in Ultima Online
@@ -722,6 +723,47 @@ local function frame()
             night = night() or nil, lights = lights, status = hud():sub(1, STATUS_LEN)}
 end
 
+-- The splash screen, in text mode before the game takes the screen: the
+-- title, and the version on the bottom row. Row 0 is the system's bar.
+local LOGO = {
+  "██████  ███████  █████  ██      ███    ███",
+  "██   ██ ██      ██   ██ ██      ████  ████",
+  "██████  █████   ███████ ██      ██ ████ ██",
+  "██   ██ ██      ██   ██ ██      ██  ██  ██",
+  "██   ██ ███████ ██   ██ ███████ ██      ██",
+}
+local SPLASH_MS = 2500
+
+local function splash()
+  local cols, rows = term.cols(), term.rows()
+  local function center(y, text, attr)
+    term.put(math.max(0, (cols - utf8.len(text)) // 2), y, text, attr)
+  end
+  term.showcursor(false)
+  term.cls()
+  local top = math.max(1, (rows - #LOGO - 6) // 2)
+  center(top, "VENDETTA 84 PRESENTS", 0x08)
+  for i, line in ipairs(LOGO) do center(top + 1 + i, line, 0x0F) end
+  center(top + #LOGO + 2, string.rep("░▒▓", 14), 0x08)
+  center(top + #LOGO + 4, "An online isometric world", 0x07)
+  term.fill(rows - 1, " ", 0x70)
+  center(rows - 1, "realm " .. VERSION, 0x70)
+  while key.poll() do end  -- the Enter that started realm does not skip it
+  return sys.millis()
+end
+
+-- Keeps the splash up until SPLASH_MS after it was drawn; a key or a click
+-- skips the wait.
+local function endSplash(shown)
+  while sys.millis() - shown < SPLASH_MS do
+    local e = key.poll()
+    if e and (e.type == "key" or e.type == "char" or (e.type == "mouse" and e.down)) then break end
+    sys.yield()
+  end
+  term.cls()
+  term.showcursor(true)
+end
+
 -- Asks for a name on the status line until a valid one is typed.
 local function askName()
   local typed = ""
@@ -744,7 +786,10 @@ end
 
 -- ------------------------------------------------------------------- main
 
-openLibrary()
+local shown = splash()
+local ok, err = pcall(openLibrary)
+endSplash(shown)
+if not ok then error(err, 0) end
 W, VIEW_H = iso.open()
 if name == "" then
   name = askName()
