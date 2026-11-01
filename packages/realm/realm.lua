@@ -19,7 +19,7 @@
 --
 -- Copyright (c) 2026 Vendetta 84. All rights reserved. See LICENSE.
 
-local VERSION = "0.8.0"  -- the version in package.lua, shown on the splash screen
+local VERSION = "0.8.1"  -- the version in package.lua, shown on the splash screen
 local PROTOCOL = 2
 local PORT = 7878
 local HW, HH = 16, 16  -- half a ground diamond: square, as in Ultima Online
@@ -121,16 +121,20 @@ local LIGHT = {{0, NIGHT}, {300, NIGHT}, {360, {16, 13, 11}}, {420, {16, 16, 16}
                {1140, {16, 16, 16}}, {1200, {16, 12, 10}}, {1260, NIGHT}, {1440, NIGHT}}
 local LIT = {[LINE] = true, [TEXT] = true, [HUD_BG] = true, [PHOS] = true}  -- never dimmed
 
+local lightAt, lightRGB = false, nil  -- light() for the clock lightAt
 local function light()
   if not clock then return 16, 16, 16 end
+  if lightAt == clock then return table.unpack(lightRGB) end
+  lightAt, lightRGB = clock, {table.unpack(NIGHT)}
   for i = 2, #LIGHT do
     local m1, a, m2, b = LIGHT[i - 1][1], LIGHT[i - 1][2], LIGHT[i][1], LIGHT[i][2]
     if clock < m2 then
       local function mix(j) return (a[j] * (m2 - clock) + b[j] * (clock - m1) + (m2 - m1) // 2) // (m2 - m1) end
-      return mix(1), mix(2), mix(3)
+      lightRGB = {mix(1), mix(2), mix(3)}
+      break
     end
   end
-  return table.unpack(NIGHT)
+  return table.unpack(lightRGB)
 end
 
 local function lightKey()
@@ -516,16 +520,20 @@ local function connect()
   send("hello %d %s", PROTOCOL, name)
 end
 
+-- Reads what the server sent and runs its lines; true if any came.
 local function pump()
+  local chunks = {inbuf}
   while sock do
     local data = sock:recv()
     if data == nil then
       disconnect("Disconnected from " .. server .. ". Retrying...")
-      return
+      return true
     end
     if data == "" then break end
-    inbuf = inbuf .. data
+    chunks[#chunks + 1] = data  -- joined once: a map line is about 16 KB
   end
+  if #chunks == 1 then return false end
+  inbuf = table.concat(chunks)
   local start = 1
   while true do
     local i = inbuf:find("\n", start, true)
@@ -534,6 +542,7 @@ local function pump()
     start = i + 1
   end
   inbuf = inbuf:sub(start)
+  return true
 end
 
 -- ----------------------------------------------------------------- screen
@@ -657,6 +666,14 @@ local function hud()
                        me.weapon and "  Sword" or "", torch, quest, fight)
 end
 
+-- Sprite names by sprite and walking frame, built once.
+local spriteNames = setmetatable({}, {__index = function(t, sprite)
+  local names = {}
+  for f = 0, 2 do names[f] = sprite .. "/" .. f end
+  t[sprite] = names
+  return names
+end})
+
 local function frame()
   local list = {}
   local p0 = myId and ents[myId]
@@ -664,7 +681,7 @@ local function frame()
     local f = 0
     if p.step > 0 then f = 1 + (p.x + p.y + p.step * 2 // STEPS) % 2 end
     local d = p0 and math.max(math.abs(p.x - p0.x), math.abs(p.y - p0.y)) or 0
-    local sprite = resolve(p.sprite .. "/" .. f) or resolve("person/" .. f)
+    local sprite = resolve(spriteNames[p.sprite][f]) or resolve(spriteNames.person[f])
     if not storeReady or not sprite then goto next end
     list[#list + 1] = {sprite = sprite, x = footX(p), y = footY(p),
                        depth = math.max(p.x + p.y, p.tx + p.ty), flip = p.left,
@@ -798,7 +815,11 @@ if name == "" then
 end
 mouse.show(true)
 
-local last, quit = sys.millis(), false
+-- A frame goes when something may have changed: a tick, a key, a line from
+-- the server; and at least every REDRAW_MS for what the clock changes (a
+-- notice that ends).
+local REDRAW_MS = 250
+local last, quit, drawn, changed = sys.millis(), false, 0, true
 local lastWalk, lastPing, ticks, ticksAt = 0, 0, 0, sys.millis()
 while not quit do
   local now = sys.millis()
@@ -806,13 +827,14 @@ while not quit do
     frame()  -- shows "connecting" while net.connect blocks
     connect()
   end
-  pump()
+  if pump() then changed = true end
   if sceneDirty and codes then buildStore() end
   -- The light changes a few dozen times a day: only the colors go again.
   if storeReady and lightLevel ~= lightKey() then applyLight() end
 
   local e = key.poll()
   while e do
+    changed = true
     local ch = e.type == "char" and e.ch:lower()
     if e.type == "key" and e.key == "esc" then
       if menu then
@@ -861,6 +883,7 @@ while not quit do
     for _, p in pairs(ents) do advance(p) end
     frameCamera(false)
     ticks = ticks + 1
+    changed = true
   end
   if now - ticksAt >= 1000 then
     fps, ticks, ticksAt = ticks * 1000 // (now - ticksAt), 0, now
@@ -876,7 +899,10 @@ while not quit do
       send("ping %d", now)
     end
   end
-  frame()
+  if changed or now - drawn >= REDRAW_MS then
+    frame()
+    changed, drawn = false, now
+  end
   sys.yield()
 end
 if sock then sock:close() end
