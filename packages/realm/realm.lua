@@ -10,7 +10,8 @@
 -- they own one) or talks to a villager; arrows (or ZQSD/WASD)
 -- walk, 1-9 pick in a menu, J opens the quest journal, H drinks a potion,
 -- T lights or puts out a torch, I (or a click on the bag in the corner)
--- opens the bag, P the character sheet (1-4 spend a level's point), Enter says something to everyone (over your head), Space
+-- opens the bag (a click on a piece of gear puts it on), E what you wear
+-- (a click takes it off), P the character sheet (1-4 spend a level's point), Enter says something to everyone (over your head), Space
 -- stops fighting, C switches the view
 -- between jumping near the edges
 -- and following every step, F3 shows the frame rate and the network lag,
@@ -22,7 +23,7 @@
 --
 -- Copyright (c) 2026 Vendetta 84. All rights reserved. See LICENSE.
 
-local VERSION = "0.13.0"  -- the version in package.lua, shown on the splash screen
+local VERSION = "0.14.0"  -- the version in package.lua, shown on the splash screen
 local PROTOCOL = 2
 local PORT = 7878
 local HW, HH = 16, 16  -- half a ground diamond: square, as in Ultima Online
@@ -202,7 +203,10 @@ local OVERLAY = {"blank", "meter2", "meter4", "meter6", "meter8", "meter10", "me
 -- slots above it, drawn as people like the graph. Its sprites always stay
 -- in the store, so that opening it is immediate.
 local BAG_SPRITES = {"blank", "bag", "slot", "item-gold", "item-sword", "item-potion",
-                     "item-torch", "item-match", "item-pelt", "item-misc"}
+                     "item-torch", "item-match", "item-pelt", "item-misc", "item-dagger",
+                     "item-axe", "item-graveblade", "item-cap", "item-helm", "item-jerkin",
+                     "item-chainmail", "item-buckler", "item-shield", "item-boots",
+                     "item-ironboots", "item-copperring", "item-goldring"}
 local LAG_SAMPLES, LAG_STEP = 16, 20  -- one bar a second, 2 dots per 20 ms
 local lags = {}                       -- the last samples, oldest first; false: lost
 local pingSent, fps = nil, 0
@@ -384,7 +388,11 @@ end
 
 local me = {hp = 0, maxhp = 0, gold = 0, inv = {}, weapon = nil,
             quest = "none", kills = 0, need = 0,
-            level = nil, xp = 0, next = 0, points = 0, attr = {}, dmg = {0, 0}, hit = 0}
+            level = nil, xp = 0, next = 0, points = 0, attr = {}, dmg = {0, 0}, hit = 0, armor = 0,
+            gear = nil}  -- gear: the item in each slot, from servers with slots
+local SLOTS = {"weapon", "head", "body", "shield", "feet", "ring"}
+local ITEMS = {}  -- name -> what the server says the piece of gear is
+local gearOpen = false
 local ATTRS = {"str", "dex", "vit", "int"}  -- the order of the sheet and of 1-4
 local sheetOpen = false
 local target = nil     -- id of the wolf being fought
@@ -468,12 +476,11 @@ end
 
 -- Swings: the frames of each weapon, each until its millisecond.
 local SWINGS = {fist = {{3, 200}}, sword = {{4, 120}, {5, 320}}}
-SWINGS.graveblade = SWINGS.sword
 
 -- Starts p's swing at the target with the weapon the server names (servers
 -- before it only tell the player's own one) and turns p toward the target.
 local function swing(p, t, weapon)
-  if not SWINGS[weapon] then return end
+  if not SWINGS[weapon] then weapon = "sword" end  -- every blade swings like it
   p.swing = {at = sys.millis(), weapon = weapon}
   local dx, dy = t.tx - p.tx, t.ty - p.ty
   if dx ~= dy then p.left = dx - dy < 0 end
@@ -523,10 +530,26 @@ end
 -- The character sheet, from servers with levels.
 function handlers.sheet(a)
   local n = {}
-  for i = 1, 11 do n[i] = tonumber(a[i]) or 0 end
+  for i = 1, 12 do n[i] = tonumber(a[i]) or 0 end
   me.level, me.xp, me.next, me.points = n[1], n[2], n[3], n[4]
   me.attr = {n[5], n[6], n[7], n[8]}
-  me.dmg, me.hit = {n[9], n[10]}, n[11]
+  me.dmg, me.hit, me.armor = {n[9], n[10]}, n[11], n[12]
+end
+
+-- What a piece of gear is: name slot dmgmin dmgmax armor str dex need price
+-- label.
+function handlers.item(a, rest)
+  local label = rest:match("^%S+ %S+ %S+ %S+ %S+ %S+ %S+ %S+ %S+ (.+)$")
+  if not label then return end
+  local n = {}
+  for i = 3, 9 do n[i] = tonumber(a[i]) or 0 end
+  ITEMS[a[1]] = {slot = a[2], dmg = {n[3], n[4]}, armor = n[5], str = n[6], dex = n[7],
+                 need = n[8], price = n[9], label = label}
+end
+
+function handlers.gear(a)
+  me.gear = {}
+  for i = 1, #SLOTS do me.gear[i] = a[i] ~= "-" and a[i] or nil end
 end
 
 function handlers.quest(a)
@@ -766,7 +789,7 @@ local function hud()
   local torch = p and p.lit and "  Torch lit" or ""
   local level = me.level and (" Lv" .. me.level) or ""
   if me.points > 0 then level = string.format("%s  +%d point: P", level, me.points) end
-  return string.format("%s%s%s  HP %d/%d  Gold %d  Potions %d%s  %s%s  H: potion  T: torch  I: bag  P: sheet  J: journal",
+  return string.format("%s%s%s  HP %d/%d  Gold %d  Potions %d%s  %s%s  H: potion  T: torch  I: bag  E: gear  P: sheet  J: journal",
                        name, level, time, me.hp, me.maxhp, me.gold, me.inv.potion or 0, torch, quest, fight)
 end
 
@@ -775,15 +798,14 @@ end
 -- (16 dots high, its top on a multiple of 16) and takes the strip's last
 -- diagonal, so it comes after everything drawn there. A slot is 24 dots
 -- wide, the item on the left and its count on the right; the button 16.
-local BAG_COLS, BAG_ROWS, SLOT, SLOT_W = 4, 2, 16, 24
+local BAG_COLS, BAG_ROWS, SLOT, SLOT_W = 4, 3, 16, 24
 local BAG_ORDER = {"potion", "torch", "match", "pelt"}  -- after gold and the weapon
 local BAG_ABOUT = {
-  gold = "Gold. Tom sells potions, torches, matches and a sword.",
+  gold = "Gold. Tom sells potions, torches and matches, Bram the smith gear.",
   sword = "Your sword: it hits harder than fists.",
   graveblade = "The grave blade, taken from the Revenant: the best blade there is.",
   pelt = "Wolf pelts. Tom buys them.",
 }
-local BAG_SPRITE = {graveblade = "item-sword"}  -- items drawn as another
 local BAG_USE = {potion = "use potion", torch = "use torch", match = "use torch"}
 
 -- The button's top left corner, above the status line at the right edge.
@@ -795,7 +817,8 @@ end
 -- count} on the screen; item is nil in an empty slot.
 local function bagSlots()
   local items = {{"gold", me.gold}}
-  if me.weapon then items[#items + 1] = {me.weapon} end
+  -- What is worn is in the gear window, on servers with slots.
+  if me.weapon and not me.gear then items[#items + 1] = {me.weapon} end
   local listed = {}
   for _, item in ipairs(BAG_ORDER) do
     listed[item] = true
@@ -829,6 +852,8 @@ local function bagClick(mx, my)
     if inside(mx, my, s.x, s.y, SLOT_W) then
       if s.item and BAG_USE[s.item] then
         send(BAG_USE[s.item])
+      elseif s.item and ITEMS[s.item] and me.gear then
+        send("equip %s", s.item)
       elseif s.item then
         say(BAG_ABOUT[s.item] or string.format("%s: %d.", s.item, s.count or 1), 3000)
       end
@@ -892,7 +917,7 @@ local SHEET_X, SHEET_Y, SHEET_LINE = 8, 72, 12
 local function sheetLines()
   local lines = {{name .. "  Level " .. (me.level or 1)},
                  {me.next > 0 and string.format("XP %d/%d", me.xp, me.next) or "XP max"},
-                 {string.format("HP %d/%d", me.hp, me.maxhp)}}
+                 {string.format("HP %d/%d  Armor %d", me.hp, me.maxhp, me.armor)}}
   local extra = {string.format("dmg %d-%d", me.dmg[1], me.dmg[2]), string.format("hit %d%%", me.hit)}
   for i, attr in ipairs(ATTRS) do
     local l = string.format("%d %s %2d", i, attr:upper(), me.attr[i] or 0)
@@ -913,6 +938,50 @@ local function sheetClick(mx, my)
     local top = SHEET_Y + (i - 1) * SHEET_LINE - 11
     if mx >= SHEET_X - 1 and mx < SHEET_X + 6 * #l[1] + 1 and my >= top and my < top + SHEET_LINE then
       if l[2] and me.points > 0 then send("raise %s", l[2]) end
+      return true
+    end
+  end
+  return false
+end
+
+-- What you wear, on E: a row per slot in the top right corner, its item
+-- (as in the bag) and what it does. The rows are 16 dots high, their tops
+-- on multiples of 16, like the bag's.
+local GEAR_Y = 32
+local function gearX() return W - 150 end
+
+-- What a piece of gear does, in a few characters.
+local function gearText(slot, name)
+  local it = ITEMS[name]
+  if not it then return slot .. ": -" end
+  local t = it.label
+  if it.slot == "weapon" then t = string.format("%s %d-%d", t, it.dmg[1], it.dmg[2]) end
+  if it.armor > 0 then t = string.format("%s +%d", t, it.armor) end
+  if it.str > 0 then t = string.format("%s +%d STR", t, it.str) end
+  if it.dex > 0 then t = string.format("%s +%d DEX", t, it.dex) end
+  return t
+end
+
+-- The window's rows: {y, sprite, text, slot}; the slot is set on the rows
+-- a click takes off.
+local function gearRows()
+  local rows = {{GEAR_Y, nil, string.format("Gear  armor %d", me.armor)}}
+  for i, slot in ipairs(SLOTS) do
+    local name = me.gear[i]
+    rows[#rows + 1] = {GEAR_Y + SLOT * i, name and "item-" .. name or "slot", gearText(slot, name),
+                       name and slot}
+  end
+  rows[#rows + 1] = {GEAR_Y + SLOT * (#SLOTS + 1), nil, "Click: take off"}
+  rows[#rows + 1] = {GEAR_Y + SLOT * (#SLOTS + 2), nil, "Bag (I): put on"}
+  return rows
+end
+
+-- A click on a worn item takes it off. True if the click was on the window.
+local function gearClick(mx, my)
+  if not gearOpen or not me.gear then return false end
+  for _, r in ipairs(gearRows()) do
+    if inside(mx, my, gearX(), r[1], SLOT_W + 4 + 6 * #r[3]) then
+      if r[4] then send("unequip %s", r[4]) end
       return true
     end
   end
@@ -965,9 +1034,20 @@ local function frame()
         screenText(list, SHEET_X, SHEET_Y + (i - 1) * SHEET_LINE, l[1])
       end
     end
+    if gearOpen and me.gear then
+      for _, r in ipairs(gearRows()) do
+        if r[2] then
+          local sprite = slotOf[r[2]] and r[2] or "item-misc"
+          screenPut(list, sprite, gearX(), r[1] + SLOT - 1)
+          screenText(list, gearX() + SLOT_W + 4, r[1] + 14, r[3])
+        else
+          screenText(list, gearX(), r[1] + 14, r[3])
+        end
+      end
+    end
     if bagOpen then
       for _, s in ipairs(bagSlots()) do
-        local item = s.item and (BAG_SPRITE[s.item] or "item-" .. s.item)
+        local item = s.item and "item-" .. s.item
         local sprite = item and (slotOf[item] and item or "item-misc")
         screenPut(list, sprite or "slot", s.x, s.y + SLOT - 1)
         -- The count on the right, its text 4 dots below the slot's top.
@@ -1029,6 +1109,13 @@ local function frame()
       for i = 1, 2 do
         table.insert(lit, 1, {x = camX + bx + SLOT - (2 * i - 1) * half // 2,
                               y = camY + by - BAG_ROWS * SLOT // 2, r = 30})
+      end
+    end
+    -- The gear window's items too, with two more.
+    if gearOpen and me.gear then
+      for i = 1, 2 do
+        table.insert(lit, 1, {x = camX + gearX() + SLOT_W // 2, y = camY + GEAR_Y + SLOT * (3 * i - 1),
+                              r = 34})
       end
     end
     for i = 1, math.min(#lit, 8) do lights[i] = lit[i] end
@@ -1163,6 +1250,8 @@ while not quit do
         journalOpen = false
       elseif sheetOpen then
         sheetOpen = false
+      elseif gearOpen then
+        gearOpen = false
       elseif bagOpen then
         bagOpen = false
       else
@@ -1174,6 +1263,8 @@ while not quit do
       if me.points > 0 then send("raise %s", ATTRS[tonumber(ch)]) end
     elseif ch == "p" then
       sheetOpen = not sheetOpen
+    elseif ch == "e" then
+      gearOpen = not gearOpen
     elseif ch == "c" then
       follow = not follow
       frameCamera(true)
@@ -1193,7 +1284,9 @@ while not quit do
       send("peace")
     elseif e.type == "mouse" and e.down and e.button == 0 then
       local mx, my = mouse.pos()
-      if not sheetClick(mx, my) and not bagClick(mx, my) then clickTo(mx, my) end
+      if not sheetClick(mx, my) and not gearClick(mx, my) and not bagClick(mx, my) then
+        clickTo(mx, my)
+      end
     elseif e.type == "key" and ARROWS[e.key] then
       -- A key press walks one tile even without held-key reports.
       local sx, sy = ARROWS[e.key][1], ARROWS[e.key][2]

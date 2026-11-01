@@ -44,7 +44,13 @@ realm opens on a splash screen with its version on the bottom row, for
   or talks to a villager; arrows (or ZQSD/WASD) walk. Players are seen
   punching, or raising and swinging the sword once they own one (the
   sword's swing needs a realm server that names the weapon in its hits).
-- P opens the character sheet: level, XP, health and the four attributes
+- E opens what you wear, in the top right corner: six slots (weapon,
+  head, body, shield, feet, ring), each item with its damage, armor or
+  bonus, and your armor (each point takes 4% off the damage you take). A
+  click on an item takes it off into the bag; a click on gear in the bag
+  puts it on. Heavy gear needs strength. Gear needs a realm server with
+  slots.
+- P opens the character sheet: level, XP, health, armor and the four attributes
   (strength: damage, dexterity: hitting and being missed, vitality: health,
   intelligence: potions and XP). Wolves and Ada's quest give XP; each level
   up gives a point, spent with 1-4 or a click on the attribute's line while
@@ -55,7 +61,7 @@ realm opens on a splash screen with its version on the bottom row, for
 - 1-9 pick in a menu, Esc closes it. J opens the quest journal, H drinks
   a potion, T lights or puts out a torch, Space stops fighting, C switches the camera, Esc quits.
 - The bag, in the bottom right corner: I or a click opens it. It shows
-  your gold, your sword and every item with its count; a click on a
+  your gold and every item with its count (12 slots); a click on a
   potion drinks it, on a torch or matches lights the torch, on anything
   else tells what it is. What you get (a slain wolf's pelt, what Tom
   sells you) pops up beside the bag.
@@ -68,7 +74,9 @@ realm opens on a splash screen with its version on the bottom row, for
   anyone's) lights about 3 tiles around it; it burns 10 minutes, each
   lighting takes a match, and putting it out keeps the rest for later.
 - Ada, on the square, asks for 5 wolves; Tom, in the house north east of
-  the square, sells potions, torches, matches and a sword and buys pelts.
+  the square, sells potions, torches and matches and buys pelts; Bram the
+  smith, in the south west house, sells weapons, armor, shields, boots and
+  rings and buys gear back at half price.
 - At night (21:00-5:00) skeletons walk the graveyard in the north east
   woods, at the end of the trail from the north road. At midnight their
   lord, the Revenant, rises: half as big again as them, he calls them to
