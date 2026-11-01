@@ -44,6 +44,11 @@ realm opens on a splash screen with its version on the bottom row, for
   sword's swing needs a realm server that names the weapon in its hits).
 - 1-9 pick in a menu, Esc closes it. J opens the quest journal, H drinks
   a potion, T lights or puts out a torch, Space stops fighting, C switches the camera, Esc quits.
+- The bag, in the bottom right corner: I or a click opens it. It shows
+  your gold, your sword and every item with its count; a click on a
+  potion drinks it, on a torch or matches lights the torch, on anything
+  else tells what it is. What you get (a slain wolf's pelt, what Tom
+  sells you) pops up beside the bag.
 - F3 shows the frame rate and, in the top left corner, a graph of the
   network lag over the last 16 seconds (a bar a second, 2 dots per 20 ms;
   green under 80 ms, yellow under 200 ms, red above or lost).

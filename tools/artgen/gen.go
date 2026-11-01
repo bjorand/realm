@@ -518,3 +518,150 @@ func init() {
 		c.set(0, 0, "line")
 	}
 }
+
+// The bag: 24x16 slots drawn as people in a corner of the screen, each
+// with its item on the left and room on the right for the count the game
+// writes; the button that opens it is 16x16. A slot is a phosphor frame on
+// the status line's black (colors the night never dims); the foot is its
+// bottom left dot. Items keep off the tunic colors, which people recolor.
+var bagItems = map[string][]string{
+	"slot": nil,
+	"bag": {
+		"....D..D....",
+		"...DPDDPD...",
+		"....D00D....",
+		"...DNNNND...",
+		"..DNPNNNOD..",
+		".DNPNNNNNOD.",
+		".DNPNNNNNOD.",
+		".DNNNNNNNOD.",
+		".DNNNNNNOOD.",
+		"..DOOOOOOD..",
+		"...DDDDDD...",
+	},
+	"item-gold": {
+		"....DDDDD...",
+		"...DSKSSSD..",
+		"...DTTTTTD..",
+		"..DDDDDDDDD.",
+		"..DSKSSSSSD.",
+		"..DTTTTTTTD.",
+		".DDDDDDDDDDD",
+		".DSKSSSSSSSD",
+		".DTTTTTTTTTD",
+		".DDDDDDDDDDD",
+	},
+	"item-sword": {
+		"..........DD",
+		".........DKD",
+		"........DQRD",
+		".......DQRD.",
+		"......DQRD..",
+		"..D..DQRD...",
+		"..DSDQRD....",
+		"...DSRD.....",
+		"..DNDSDD....",
+		".DNDD.DSD...",
+		"DNDD...DD...",
+		"DDD.........",
+	},
+	"item-potion": {
+		"....DDDD....",
+		"....DNND....",
+		".....DD.....",
+		"....DQQD....",
+		"...DQKVVD...",
+		"..DVVVVVVD..",
+		"..DVKVVVVD..",
+		"..DVVVVVVD..",
+		"..DVVVVVVD..",
+		"...DVVVVD...",
+		"....DDDD....",
+	},
+	"item-torch": {
+		".....JJ.....",
+		"....JKJI....",
+		"....IJJI....",
+		".....II.....",
+		"....DOOD....",
+		"....DNOD....",
+		"....DNOD....",
+		"....DNOD....",
+		"....DNOD....",
+		"....DNOD....",
+		"....DNOD....",
+		".....DD.....",
+	},
+	"item-match": {
+		"..I.I.I.....",
+		"..P.P.P.....",
+		"..P.P.P.....",
+		".DDDDDDDDD..",
+		".DZZZZZZZD..",
+		".DYYYYYYYD..",
+		".DYIYYYYYD..",
+		".DYYYYYYYD..",
+		".DDDDDDDDD..",
+	},
+	"item-pelt": {
+		".DD......DD.",
+		"DmmD....DmmD",
+		".DmmDDDDmmD.",
+		"..DmmmmmmD..",
+		"..DmmnmmmD..",
+		".DmmnnnmmmD.",
+		"..DmmnmmmD..",
+		"..DmmmmmmD..",
+		".DmmDDDDmmD.",
+		"DmmD....DmmD",
+		".DD......DD.",
+	},
+	"item-misc": {
+		".....DD.....",
+		"....D00D....",
+		"...DDYYDD...",
+		"..DYYYYYYD..",
+		".DYYZYYYYYD.",
+		".DYZYYYYYYD.",
+		".DYYYYYYYYD.",
+		"..DYYYYYYD..",
+		"...DDDDDD...",
+	},
+}
+
+var bagColors = map[byte]string{
+	'D': "line", 'K': "text", 'S': "gold", 'T': "gold_d", 'Q': "metal", 'R': "metal_d",
+	'N': "wood", 'O': "wood_d", 'P': "wood_l", '0': "straw", 'V': "apple", 'J': "flower_y",
+	'I': "flower_r", 'Y': "cloth", 'Z': "cloth_l", 'm': "dirt0", 'n': "dirt1",
+}
+
+func init() {
+	for name, rows := range bagItems {
+		w := 24
+		if name == "bag" {
+			w = 16
+		}
+		gens[name] = func(c *canvas) {
+			c.s.Kind = "person"
+			for y := -15; y <= 0; y++ {
+				for x := 0; x < w; x++ {
+					if x == 0 || x == w-1 || y == -15 || y == 0 {
+						c.set(x, y, "phos")
+					} else {
+						c.set(x, y, "hud_bg")
+					}
+				}
+			}
+			// The item centered in the frame's 14x14 inside.
+			top := -14 + (14-len(rows))/2
+			for j, row := range rows {
+				left := 1 + (14-len(row))/2
+				for i := 0; i < len(row); i++ {
+					if row[i] != '.' {
+						c.set(left+i, top+j, bagColors[row[i]])
+					}
+				}
+			}
+		}
+	}
+}

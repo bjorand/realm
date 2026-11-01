@@ -9,10 +9,11 @@
 -- A click walks, attacks a wolf (players punch, or swing the sword once they
 -- own one) or talks to a villager; arrows (or ZQSD/WASD)
 -- walk, 1-9 pick in a menu, J opens the quest journal, H drinks a potion,
--- T lights or puts out a torch, Space stops fighting, C switches the view
+-- T lights or puts out a torch, I (or a click on the bag in the corner)
+-- opens the bag, Space stops fighting, C switches the view
 -- between jumping near the edges
 -- and following every step, F3 shows the frame rate and the network lag,
--- Esc closes a menu or the journal, or quits.
+-- Esc closes a menu, the journal or the bag, or quits.
 --
 -- The server keeps the time of day: the world darkens to a blue night and
 -- warms at dawn and dusk (the palette is dimmed, the text is not). On the
@@ -20,7 +21,7 @@
 --
 -- Copyright (c) 2026 Vendetta 84. All rights reserved. See LICENSE.
 
-local VERSION = "0.9.0"  -- the version in package.lua, shown on the splash screen
+local VERSION = "0.10.0"  -- the version in package.lua, shown on the splash screen
 local PROTOCOL = 2
 local PORT = 7878
 local HW, HH = 16, 16  -- half a ground diamond: square, as in Ultima Online
@@ -195,6 +196,11 @@ local slotOf = {}        -- sprite name -> store slot
 local overlay = false
 local OVERLAY = {"blank", "meter2", "meter4", "meter6", "meter8", "meter10", "meter12",
                  "meter14", "meter16"}
+-- The bag: a button in the bottom right corner and, open, a grid of 16x16
+-- slots above it, drawn as people like the graph. Its sprites always stay
+-- in the store, so that opening it is immediate.
+local BAG_SPRITES = {"blank", "bag", "slot", "item-gold", "item-sword", "item-potion",
+                     "item-torch", "item-match", "item-pelt", "item-misc"}
 local LAG_SAMPLES, LAG_STEP = 16, 20  -- one bar a second, 2 dots per 20 ms
 local lags = {}                       -- the last samples, oldest first; false: lost
 local pingSent, fps = nil, 0
@@ -247,6 +253,7 @@ local function wanted()
     local n = tileset[code]
     if not n:match("/%d+$") or n:match("/0$") then add(n, first) end
   end
+  for _, n in ipairs(BAG_SPRITES) do add(n, first) end
   for _, b in ipairs(people) do
     add(b .. "/1", frames)
     add(b .. "/2", frames)
@@ -374,6 +381,9 @@ local menu = nil       -- text of the open menu
 local journal = nil    -- the quest log entry, from the server
 local journalOpen = false
 local notice, noticeUntil = nil, 0
+local bagOpen = false
+local bagSeen = false                  -- the first inv after login is no pickup
+local pickup, pickupUntil = nil, 0     -- "+1 pelt" beside the bag button
 
 local function say(text, ms)
   notice, noticeUntil = text, sys.millis() + (ms or 5000)
@@ -396,6 +406,7 @@ end
 local function disconnect(why)
   if sock then sock:close() end
   sock, inbuf, ents, myId, target, menu, clock = nil, "", {}, nil, nil, nil, nil
+  bagSeen = false
   say(why, 5000)
   nextTry = sys.millis() + 5000
 end
@@ -475,11 +486,23 @@ function handlers.stats(a)
   me.hp, me.maxhp, me.gold = tonumber(a[1]), tonumber(a[2]), tonumber(a[3])
 end
 
+-- What goes into the bag (a wolf's pelt, what Tom sells) pops up beside
+-- its button.
 function handlers.inv(a)
+  local old, oldWeapon, got = me.inv, me.weapon, nil
   me.inv, me.weapon = {}, nil
   for item, n in (a[1] or ""):gmatch("(%w+):(%w+)") do
     if n == "equipped" then me.weapon = item else me.inv[item] = tonumber(n) end
   end
+  for item, n in pairs(me.inv) do
+    if n > (old[item] or 0) then got = string.format("+%d %s", n - (old[item] or 0), item) end
+  end
+  if me.weapon and me.weapon ~= oldWeapon then got = "+" .. me.weapon end
+  if got and bagSeen then
+    pickup, pickupUntil = got:sub(1, 8), sys.millis() + 2000
+    sound.play("pickup:d=16,o=5,b=200:c,e,g")
+  end
+  bagSeen = true
 end
 
 function handlers.quest(a)
@@ -673,15 +696,77 @@ local function hud()
   local t = target and ents[target]
   if t then fight = string.format("  Fighting %s %d/%d", t.base, t.hp, t.maxhp) end
   local time = clock and string.format("  %02d:%02d", clock // 60, clock % 60) or ""
-  local p, torch = ents[myId], ""
-  if p and p.lit then
-    torch = "  Torch lit"
-  elseif (me.inv.torch or 0) > 0 or (me.inv.match or 0) > 0 then
-    torch = string.format("  Torches %d Matches %d", me.inv.torch or 0, me.inv.match or 0)
+  -- The rest of what the player owns is in the bag.
+  local p = ents[myId]
+  local torch = p and p.lit and "  Torch lit" or ""
+  return string.format("%s%s  HP %d/%d  Gold %d  Potions %d%s  %s%s  H: potion  T: torch  I: bag  J: journal",
+                       name, time, me.hp, me.maxhp, me.gold, me.inv.potion or 0, torch, quest, fight)
+end
+
+-- The bag on the screen. The video card draws 16-line strips, each with the
+-- diagonals that can reach it: a sprite of the bag stays within one strip
+-- (16 dots high, its top on a multiple of 16) and takes the strip's last
+-- diagonal, so it comes after everything drawn there. A slot is 24 dots
+-- wide, the item on the left and its count on the right; the button 16.
+local BAG_COLS, BAG_ROWS, SLOT, SLOT_W = 4, 2, 16, 24
+local BAG_ORDER = {"potion", "torch", "match", "pelt"}  -- after gold and the weapon
+local BAG_ABOUT = {
+  gold = "Gold. Tom sells potions, torches, matches and a sword.",
+  sword = "Your sword: it hits harder than fists.",
+  pelt = "Wolf pelts. Tom buys them.",
+}
+local BAG_USE = {potion = "use potion", torch = "use torch", match = "use torch"}
+
+-- The button's top left corner, above the status line at the right edge.
+local function bagButton()
+  return W - SLOT - 4, (VIEW_H // SLOT - 1) * SLOT
+end
+
+-- The slots of the open bag, left to right and top to bottom: {x, y, item,
+-- count} on the screen; item is nil in an empty slot.
+local function bagSlots()
+  local items = {{"gold", me.gold}}
+  if me.weapon then items[#items + 1] = {me.weapon} end
+  local listed = {}
+  for _, item in ipairs(BAG_ORDER) do
+    listed[item] = true
+    if (me.inv[item] or 0) > 0 then items[#items + 1] = {item, me.inv[item]} end
   end
-  return string.format("%s%s  HP %d/%d  Gold %d  Potions %d%s%s  %s%s  H: potion  T: torch  J: journal",
-                       name, time, me.hp, me.maxhp, me.gold, me.inv.potion or 0,
-                       me.weapon and "  Sword" or "", torch, quest, fight)
+  for _, item in ipairs(sortedKeys(me.inv)) do
+    if not listed[item] and me.inv[item] > 0 then items[#items + 1] = {item, me.inv[item]} end
+  end
+  local bx, by = bagButton()
+  local slots = {}
+  for i = 0, BAG_COLS * BAG_ROWS - 1 do
+    local it = items[i + 1] or {}
+    slots[#slots + 1] = {x = bx + SLOT - (BAG_COLS - i % BAG_COLS) * SLOT_W,
+                         y = by - (BAG_ROWS - i // BAG_COLS) * SLOT, item = it[1], count = it[2]}
+  end
+  return slots
+end
+
+local function inside(mx, my, x, y, w) return mx >= x and mx < x + w and my >= y and my < y + SLOT end
+
+-- A click on the bag: the button opens or closes it, a potion or a torch
+-- is used, anything else is described. True if the click was on the bag.
+local function bagClick(mx, my)
+  local bx, by = bagButton()
+  if inside(mx, my, bx, by, SLOT) then
+    bagOpen = not bagOpen
+    return true
+  end
+  if not bagOpen then return false end
+  for _, s in ipairs(bagSlots()) do
+    if inside(mx, my, s.x, s.y, SLOT_W) then
+      if s.item and BAG_USE[s.item] then
+        send(BAG_USE[s.item])
+      elseif s.item then
+        say(BAG_ABOUT[s.item] or string.format("%s: %d.", s.item, s.count or 1), 3000)
+      end
+      return true
+    end
+  end
+  return false
 end
 
 -- The frame of p's swing at now, and how far it leans in, in dots; nil when
@@ -702,6 +787,26 @@ local spriteNames = setmetatable({}, {__index = function(t, sprite)
   t[sprite] = names
   return names
 end})
+
+-- A sprite at (sx, sy) on the screen, over the world: it takes the last
+-- diagonal of the 16-line strip its foot is in (see the bag), and stays
+-- among the people drawn.
+local function screenPut(list, sprite, sx, sy, tunic, label)
+  local slot = slotOf[sprite]
+  if not slot then return end
+  local depth = math.max(0, math.min(2 * MAP - 2, (camY + (sy // 16 + 1) * 16 + reachUp) // HH + 1))
+  list[#list + 1] = {sprite = slot, x = camX + sx, y = camY + sy, depth = depth,
+                     tunic = tunic or 0, name = label, d = -2}
+end
+
+-- Text alone, its middle at sx and its top at sy - 10: a blank person on
+-- no diagonal, which the card never draws but whose name goes over all.
+local function screenLabel(list, sx, sy, text)
+  local slot = slotOf.blank
+  if not slot then return end
+  list[#list + 1] = {sprite = slot, x = camX + sx, y = camY + sy, depth = 255,
+                     tunic = 0, name = text, d = -2}
+end
 
 local function frame()
   local list = {}
@@ -725,27 +830,35 @@ local function frame()
     ::next::
   end
   if overlay and storeReady and MAP > 0 then
-    -- The video card draws 16-line strips, each with the diagonals that can
-    -- reach it: the bars stay in the strip of lines 32-47 and take its last
-    -- diagonal, so they come after everything drawn there.
-    local depth = math.min(2 * MAP - 2, (camY + 48 + reachUp) // HH + 1)
-    local function put(sprite, sx, sy, tunic, label)
-      local slot = slotOf[sprite]
-      if slot then
-        list[#list + 1] = {sprite = slot, x = camX + sx, y = camY + sy, depth = depth,
-                           tunic = tunic or 0, name = label, d = -2}
-      end
-    end
+    -- The bars stay in the strip of lines 32-47.
     local last = lags[#lags]
-    put("blank", 24, 30, nil, last and (last .. "ms") or "--ms")
-    put("blank", 74, 30, nil, fps .. "fps")
+    screenLabel(list, 24, 30, last and (last .. "ms") or "--ms")
+    screenLabel(list, 74, 30, fps .. "fps")
     for i, ms in ipairs(lags) do
       local h, rgb = 16, "e04040"
       if ms then
         h = math.min(16, math.max(2, 2 * ((ms + LAG_STEP - 1) // LAG_STEP)))
         rgb = ms < 80 and "40c060" or ms < 200 and "e0c040" or "e04040"
       end
-      put("meter" .. h, 8 + 4 * (i - 1), 47, tunicOf(rgb))
+      screenPut(list, "meter" .. h, 8 + 4 * (i - 1), 47, tunicOf(rgb))
+    end
+  end
+  if storeReady and MAP > 0 then
+    local bx, by = bagButton()
+    screenPut(list, "bag", bx, by + SLOT - 1)
+    if pickup and now < pickupUntil then
+      screenLabel(list, bx - 4 - 3 * #pickup, by + 14, pickup)
+    end
+    if bagOpen then
+      for _, s in ipairs(bagSlots()) do
+        local sprite = s.item and (slotOf["item-" .. s.item] and "item-" .. s.item or "item-misc")
+        screenPut(list, sprite or "slot", s.x, s.y + SLOT - 1)
+        -- The count on the right, its text 4 dots below the slot's top.
+        if s.count then
+          local n = tostring(s.count)
+          screenLabel(list, s.x + SLOT_W - 2 - 3 * #n, s.y + 14, n)
+        end
+      end
     end
   end
   if #list > MAX_PEOPLE then
@@ -763,6 +876,16 @@ local function frame()
       end
     end
     table.sort(lit, function(a, b) return a.d < b.d end)
+    -- The open bag keeps its colors: it takes the first two lights, one on
+    -- each half of the grid.
+    if bagOpen then
+      local bx, by = bagButton()
+      local half = BAG_COLS * SLOT_W // 2
+      for i = 1, 2 do
+        table.insert(lit, 1, {x = camX + bx + SLOT - (2 * i - 1) * half // 2,
+                              y = camY + by - BAG_ROWS * SLOT // 2, r = 30})
+      end
+    end
     for i = 1, math.min(#lit, 8) do lights[i] = lit[i] end
   end
   -- Trees and walls in front of the player let them show through.
@@ -878,6 +1001,8 @@ while not quit do
         send("choose 0")
       elseif journalOpen then
         journalOpen = false
+      elseif bagOpen then
+        bagOpen = false
       else
         quit = true
       end
@@ -892,6 +1017,8 @@ while not quit do
       send("use torch")
     elseif ch == "j" then
       journalOpen = not journalOpen
+    elseif ch == "i" then
+      bagOpen = not bagOpen
     elseif e.type == "key" and e.key == "f3" then
       overlay = not overlay
       sceneDirty = true  -- the graph's sprites come into the store
@@ -899,7 +1026,8 @@ while not quit do
       target = nil
       send("peace")
     elseif e.type == "mouse" and e.down and e.button == 0 then
-      clickTo(mouse.pos())
+      local mx, my = mouse.pos()
+      if not bagClick(mx, my) then clickTo(mx, my) end
     elseif e.type == "key" and ARROWS[e.key] then
       -- A key press walks one tile even without held-key reports.
       local sx, sy = ARROWS[e.key][1], ARROWS[e.key][2]
