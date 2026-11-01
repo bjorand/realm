@@ -1,0 +1,33 @@
+# The Revenant, lord of the graveyard: a crowned skeleton, half as big
+# again as the others, with burning eyes. Its rags are the tunic pair.
+name revenant/1
+kind person
+scale 3
+anchor 18 72
+shadow 3 0 16 4
+legend o=line w=bone W=bone_d e=eye r=tunic R=tunic_d
+---
+...S.SS.S...
+...SSSSSS...
+...SSVVSS...
+....oooo....
+...owwwwo...
+..owwwwwwo..
+..owwwwwwo..
+..owwweweo..
+..owwwwwwo..
+...owWwWo...
+....owwo....
+...orrrro...
+..owrwwrwo..
+.owwrwwrwwo.
+.ow.rwwr.wo.
+.ow.rRRr.wo.
+.ow.RwwR.wo.
+..o.owwo.o..
+...owWWwo...
+..ow....wo..
+..oW....Wo..
+.ow......wo.
+.ow......wo.
+oo........oo

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"regexp"
 	"testing"
 )
 
@@ -89,11 +90,19 @@ func TestRLE(t *testing.T) {
 	}
 }
 
-// The whole library fits one V4 store, and each sprite reads back.
+// What every scene needs fits one store: each person's frames and every
+// ground and object but their variants ("tree/1"), which the game leaves
+// out when the store is full. Each sprite reads back.
 func TestStore4(t *testing.T) {
-	p, sprites, err := load("../../art")
+	p, all, err := load("../../art")
 	if err != nil {
 		t.Fatal(err)
+	}
+	var sprites []*Sprite
+	for _, s := range all {
+		if s.Kind == "person" || !variant.MatchString(s.Name) {
+			sprites = append(sprites, s)
+		}
 	}
 	st, err := PackStore4(p, sprites)
 	if err != nil {
@@ -115,3 +124,5 @@ func TestStore4(t *testing.T) {
 	}
 	t.Logf("%d sprites in %d bytes of %d", len(sprites), len(st), storeSize4)
 }
+
+var variant = regexp.MustCompile(`/[1-9][0-9]*$`)

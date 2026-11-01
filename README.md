@@ -1,9 +1,9 @@
 # realm
 
 Online isometric world for Termina, by Vendetta 84: an island village
-shared with other players, wolves in the woods, a quest from Ada and Tom's
-shop. The source is public, but realm is not open source: all rights
-reserved, see [LICENSE](LICENSE).
+shared with other players, wolves in the woods, a haunted graveyard, a
+quest from Ada and Tom's shop. The source is public, but realm is not
+open source: all rights reserved, see [LICENSE](LICENSE).
 
 The world lives on a realm server
 ([realm-server](https://github.com/bjorand/realm-server)): the machine
@@ -32,13 +32,15 @@ with the HDMI firmware of 2026-10-31 on (the test pattern reads
 `TERMINA VIDEO 640x480 V5`); on an older card realm stops with a message.
 Torchlight needs the V6 card (firmware 1.1.0 on both boards, test pattern
 `TERMINA VIDEO 640x480 V6`): on V5 the night is just darker everywhere.
+Walls stop the torchlight from V9 on (firmware 1.4.0 on both boards): before,
+it shines through them.
 
 ## Playing
 
 realm opens on a splash screen with its version on the bottom row, for
 2.5 seconds or until a key or a click.
 
-- A click walks, attacks a wolf (auto-attack every 1.5 s while next to it)
+- A click walks, attacks a monster (auto-attack every 1.5 s while next to it)
   or talks to a villager; arrows (or ZQSD/WASD) walk. Players are seen
   punching, or raising and swinging the sword once they own one (the
   sword's swing needs a realm server that names the weapon in its hits).
@@ -67,6 +69,11 @@ realm opens on a splash screen with its version on the bottom row, for
   lighting takes a match, and putting it out keeps the rest for later.
 - Ada, on the square, asks for 5 wolves; Tom, in the house north east of
   the square, sells potions, torches, matches and a sword and buys pelts.
+- At night (21:00-5:00) skeletons walk the graveyard in the north east
+  woods, at the end of the trail from the north road. At midnight their
+  lord, the Revenant, rises: half as big again as them, he calls them to
+  his side at half health. Whoever slays him takes the grave blade, the
+  best weapon there is. Needs a realm server with the graveyard.
 
 ## Files
 

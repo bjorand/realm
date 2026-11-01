@@ -6,8 +6,8 @@
 --
 --   realm [host[:port]] [name]   both are remembered for the next time
 --
--- A click walks, attacks a wolf (players punch, or swing the sword once they
--- own one) or talks to a villager; arrows (or ZQSD/WASD)
+-- A click walks, attacks a monster (players punch, or swing their blade once
+-- they own one) or talks to a villager; arrows (or ZQSD/WASD)
 -- walk, 1-9 pick in a menu, J opens the quest journal, H drinks a potion,
 -- T lights or puts out a torch, I (or a click on the bag in the corner)
 -- opens the bag, P the character sheet (1-4 spend a level's point), Enter says something to everyone (over your head), Space
@@ -22,7 +22,7 @@
 --
 -- Copyright (c) 2026 Vendetta 84. All rights reserved. See LICENSE.
 
-local VERSION = "0.12.0"  -- the version in package.lua, shown on the splash screen
+local VERSION = "0.13.0"  -- the version in package.lua, shown on the splash screen
 local PROTOCOL = 2
 local PORT = 7878
 local HW, HH = 16, 16  -- half a ground diamond: square, as in Ultima Online
@@ -169,6 +169,7 @@ end
 -- takes the colors of the hour.
 local TORCH = {16, 15, 13}  -- warm light
 local TORCH_R = 100         -- world dots, about 3 tiles
+local OPAQUE = 2            -- sprite flag: walls stop the torchlight (video V9)
 local function night() return DARK and lightKey() ~= 16 << 10 | 16 << 5 | 16 end
 
 local function palette()
@@ -295,6 +296,7 @@ local function buildStore()
     local s = lib[n]
     local at, len, flags = s.off, s.w * s.h, 0
     if s.rlen > 0 and s.rlen < len then at, len, flags = s.roff, s.rlen, 1 end
+    if n == "wall" then flags = flags | OPAQUE end
     if #entries < MAX_SPRITES and used + len <= STORE then
       local _, data = zlib.inflate(libPath, at)
       pixels[#pixels + 1] = data
@@ -363,10 +365,15 @@ local function advance(p)
   end
 end
 
+-- Monsters are whatever is not a person: wolves, skeletons, the boss and
+-- kinds of later servers.
+local PEOPLE = {player = true, npc = true, merchant = true}
+local function isMonster(p) return p and not PEOPLE[p.kind] end
+
 local function setHP(p, hp, maxhp)
   p.hp, p.maxhp = hp, maxhp
   -- A wounded monster shows its health instead of its name (8 characters).
-  if p.kind == "wolf" and hp < maxhp then
+  if isMonster(p) and hp < maxhp then
     p.name = string.format("%d/%d", hp, maxhp)
   else
     p.name = p.base
@@ -461,6 +468,7 @@ end
 
 -- Swings: the frames of each weapon, each until its millisecond.
 local SWINGS = {fist = {{3, 200}}, sword = {{4, 120}, {5, 320}}}
+SWINGS.graveblade = SWINGS.sword
 
 -- Starts p's swing at the target with the weapon the server names (servers
 -- before it only tell the player's own one) and turns p toward the target.
@@ -486,7 +494,7 @@ function handlers.hit(a)
     sound.tone(dst == myId and 160 or 660, 40)
   end
   -- Hit first: fight back at what bites.
-  if dst == myId and not target and ents[src] and ents[src].kind == "wolf" then target = src end
+  if dst == myId and not target and isMonster(ents[src]) then target = src end
 end
 
 function handlers.stats(a)
@@ -692,7 +700,7 @@ local function clickTo(mx, my)
   local x, y = math.floor((a + b) / 2 + .5), math.floor((b - a) / 2 + .5)
   local id, p = personAt(mx, my)
   if not p then id, p = entityAt(x, y) end
-  if p and p.kind == "wolf" then
+  if isMonster(p) then
     target = id
     send("attack %d", id)
   elseif p and (p.kind == "npc" or p.kind == "merchant") then
@@ -772,8 +780,10 @@ local BAG_ORDER = {"potion", "torch", "match", "pelt"}  -- after gold and the we
 local BAG_ABOUT = {
   gold = "Gold. Tom sells potions, torches, matches and a sword.",
   sword = "Your sword: it hits harder than fists.",
+  graveblade = "The grave blade, taken from the Revenant: the best blade there is.",
   pelt = "Wolf pelts. Tom buys them.",
 }
+local BAG_SPRITE = {graveblade = "item-sword"}  -- items drawn as another
 local BAG_USE = {potion = "use potion", torch = "use torch", match = "use torch"}
 
 -- The button's top left corner, above the status line at the right edge.
@@ -957,7 +967,8 @@ local function frame()
     end
     if bagOpen then
       for _, s in ipairs(bagSlots()) do
-        local sprite = s.item and (slotOf["item-" .. s.item] and "item-" .. s.item or "item-misc")
+        local item = s.item and (BAG_SPRITE[s.item] or "item-" .. s.item)
+        local sprite = item and (slotOf[item] and item or "item-misc")
         screenPut(list, sprite or "slot", s.x, s.y + SLOT - 1)
         -- The count on the right, its text 4 dots below the slot's top.
         if s.count then
@@ -1003,7 +1014,10 @@ local function frame()
     for id, p in pairs(ents) do
       if p.lit then
         local d = p0 and math.max(math.abs(p.x - p0.x), math.abs(p.y - p0.y)) or 0
-        lit[#lit + 1] = {x = footX(p), y = footY(p) - 20, r = TORCH_R, d = id == myId and -1 or d}
+        -- Its tile, the nearer of the two while it steps: walls stop it.
+        local near = p.step * 2 < STEPS
+        lit[#lit + 1] = {x = footX(p), y = footY(p) - 20, r = TORCH_R, d = id == myId and -1 or d,
+                         tx = near and p.x or p.tx, ty = near and p.y or p.ty}
       end
     end
     table.sort(lit, function(a, b) return a.d < b.d end)
