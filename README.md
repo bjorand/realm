@@ -42,6 +42,11 @@ realm opens on a splash screen with its version on the bottom row, for
   or talks to a villager; arrows (or ZQSD/WASD) walk. Players are seen
   punching, or raising and swinging the sword once they own one (the
   sword's swing needs a realm server that names the weapon in its hits).
+- P opens the character sheet: level, XP, health and the four attributes
+  (strength: damage, dexterity: hitting and being missed, vitality: health,
+  intelligence: potions and XP). Wolves and Ada's quest give XP; each level
+  up gives a point, spent with 1-4 or a click on the attribute's line while
+  the sheet is open. Levels need a realm server that knows them.
 - Enter opens a chat line on the status line (60 characters, Enter sends,
   Esc cancels): every player sees it over your head for a few seconds, and
   on their status line. Chat needs a realm server that knows `chat`.

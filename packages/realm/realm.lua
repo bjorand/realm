@@ -10,7 +10,7 @@
 -- own one) or talks to a villager; arrows (or ZQSD/WASD)
 -- walk, 1-9 pick in a menu, J opens the quest journal, H drinks a potion,
 -- T lights or puts out a torch, I (or a click on the bag in the corner)
--- opens the bag, Enter says something to everyone (over your head), Space
+-- opens the bag, P the character sheet (1-4 spend a level's point), Enter says something to everyone (over your head), Space
 -- stops fighting, C switches the view
 -- between jumping near the edges
 -- and following every step, F3 shows the frame rate and the network lag,
@@ -22,7 +22,7 @@
 --
 -- Copyright (c) 2026 Vendetta 84. All rights reserved. See LICENSE.
 
-local VERSION = "0.11.0"  -- the version in package.lua, shown on the splash screen
+local VERSION = "0.12.0"  -- the version in package.lua, shown on the splash screen
 local PROTOCOL = 2
 local PORT = 7878
 local HW, HH = 16, 16  -- half a ground diamond: square, as in Ultima Online
@@ -376,7 +376,10 @@ end
 -- ------------------------------------------------------------------- game
 
 local me = {hp = 0, maxhp = 0, gold = 0, inv = {}, weapon = nil,
-            quest = "none", kills = 0, need = 0}
+            quest = "none", kills = 0, need = 0,
+            level = nil, xp = 0, next = 0, points = 0, attr = {}, dmg = {0, 0}, hit = 0}
+local ATTRS = {"str", "dex", "vit", "int"}  -- the order of the sheet and of 1-4
+local sheetOpen = false
 local target = nil     -- id of the wolf being fought
 local menu = nil       -- text of the open menu
 local journal = nil    -- the quest log entry, from the server
@@ -509,6 +512,15 @@ function handlers.inv(a)
   bagSeen = true
 end
 
+-- The character sheet, from servers with levels.
+function handlers.sheet(a)
+  local n = {}
+  for i = 1, 11 do n[i] = tonumber(a[i]) or 0 end
+  me.level, me.xp, me.next, me.points = n[1], n[2], n[3], n[4]
+  me.attr = {n[5], n[6], n[7], n[8]}
+  me.dmg, me.hit = {n[9], n[10]}, n[11]
+end
+
 function handlers.quest(a)
   me.quest, me.kills, me.need = a[1], tonumber(a[2]), tonumber(a[3])
 end
@@ -556,6 +568,15 @@ local function wrap(text)
   end
   if line ~= "" then lines[#lines + 1] = line end
   return lines
+end
+
+-- Someone reached a level: it shows over their head like a chat line.
+function handlers.level(a)
+  local id, n = tonumber(a[1]), tonumber(a[2])
+  local p = id and ents[id]
+  if not p or not n then return end
+  p.chat = {lines = {"Level " .. n .. "!"}, untilMs = sys.millis() + 4000}
+  if id == myId then sound.play("level:d=8,o=5,b=180:c,e,g,2c6") end
 end
 
 -- What a player says shows over their head for a while, and on the status
@@ -735,8 +756,10 @@ local function hud()
   -- The rest of what the player owns is in the bag.
   local p = ents[myId]
   local torch = p and p.lit and "  Torch lit" or ""
-  return string.format("%s%s  HP %d/%d  Gold %d  Potions %d%s  %s%s  H: potion  T: torch  I: bag  J: journal",
-                       name, time, me.hp, me.maxhp, me.gold, me.inv.potion or 0, torch, quest, fight)
+  local level = me.level and (" Lv" .. me.level) or ""
+  if me.points > 0 then level = string.format("%s  +%d point: P", level, me.points) end
+  return string.format("%s%s%s  HP %d/%d  Gold %d  Potions %d%s  %s%s  H: potion  T: torch  I: bag  P: sheet  J: journal",
+                       name, level, time, me.hp, me.maxhp, me.gold, me.inv.potion or 0, torch, quest, fight)
 end
 
 -- The bag on the screen. The video card draws 16-line strips, each with the
@@ -844,6 +867,48 @@ local function screenLabel(list, sx, sy, text)
                      tunic = 0, name = text, d = -2}
 end
 
+-- A line of text from sx on the left: the card draws 8 characters a label,
+-- so the line is labels side by side.
+local function screenText(list, sx, sy, text)
+  for c = 1, #text, 8 do
+    local chunk = text:sub(c, c + 7)
+    screenLabel(list, sx + 6 * (c - 1) + 3 * #chunk, sy, chunk)
+  end
+end
+
+-- The character sheet, on the left of the view: its lines, and for each the
+-- attribute it raises when clicked.
+local SHEET_X, SHEET_Y, SHEET_LINE = 8, 72, 12
+local function sheetLines()
+  local lines = {{name .. "  Level " .. (me.level or 1)},
+                 {me.next > 0 and string.format("XP %d/%d", me.xp, me.next) or "XP max"},
+                 {string.format("HP %d/%d", me.hp, me.maxhp)}}
+  local extra = {string.format("dmg %d-%d", me.dmg[1], me.dmg[2]), string.format("hit %d%%", me.hit)}
+  for i, attr in ipairs(ATTRS) do
+    local l = string.format("%d %s %2d", i, attr:upper(), me.attr[i] or 0)
+    if extra[i] then l = l .. "  " .. extra[i] end
+    lines[#lines + 1] = {l, attr}
+  end
+  lines[#lines + 1] = {me.points > 0 and string.format("Points %d: 1-4 or click", me.points)
+                       or "No point to spend"}
+  lines[#lines + 1] = {"P: close"}
+  return lines
+end
+
+-- A click on a line of the open sheet raises its attribute. True if the
+-- click was on the sheet.
+local function sheetClick(mx, my)
+  if not sheetOpen then return false end
+  for i, l in ipairs(sheetLines()) do
+    local top = SHEET_Y + (i - 1) * SHEET_LINE - 11
+    if mx >= SHEET_X - 1 and mx < SHEET_X + 6 * #l[1] + 1 and my >= top and my < top + SHEET_LINE then
+      if l[2] and me.points > 0 then send("raise %s", l[2]) end
+      return true
+    end
+  end
+  return false
+end
+
 local function frame()
   local list = {}
   local p0 = myId and ents[myId]
@@ -885,6 +950,11 @@ local function frame()
     if pickup and now < pickupUntil then
       screenLabel(list, bx - 4 - 3 * #pickup, by + 14, pickup)
     end
+    if sheetOpen and me.level then
+      for i, l in ipairs(sheetLines()) do
+        screenText(list, SHEET_X, SHEET_Y + (i - 1) * SHEET_LINE, l[1])
+      end
+    end
     if bagOpen then
       for _, s in ipairs(bagSlots()) do
         local sprite = s.item and (slotOf["item-" .. s.item] and "item-" .. s.item or "item-misc")
@@ -922,11 +992,7 @@ local function frame()
       local s = lib[p.sprite .. "/0"] or lib["person/0"]
       local cx, top = footX(p) - camX, footY(p) - camY - (s and s.ay or 0)
       for i, l in ipairs(lines) do
-        local x0, y = cx - 3 * #l, top - 11 * (#lines - i + 1)
-        for c = 1, #l, 8 do
-          local chunk = l:sub(c, c + 7)
-          screenLabel(list, x0 + 6 * (c - 1) + 3 * #chunk, y, chunk)
-        end
+        screenText(list, cx - 3 * #l, top - 11 * (#lines - i + 1), l)
       end
     end
   end
@@ -1081,6 +1147,8 @@ while not quit do
         send("choose 0")
       elseif journalOpen then
         journalOpen = false
+      elseif sheetOpen then
+        sheetOpen = false
       elseif bagOpen then
         bagOpen = false
       else
@@ -1088,6 +1156,10 @@ while not quit do
       end
     elseif menu and ch and ch:match("^%d$") then
       send("choose %s", ch)
+    elseif sheetOpen and ch and ATTRS[tonumber(ch:match("^[1-4]$") or "")] then
+      if me.points > 0 then send("raise %s", ATTRS[tonumber(ch)]) end
+    elseif ch == "p" then
+      sheetOpen = not sheetOpen
     elseif ch == "c" then
       follow = not follow
       frameCamera(true)
@@ -1107,7 +1179,7 @@ while not quit do
       send("peace")
     elseif e.type == "mouse" and e.down and e.button == 0 then
       local mx, my = mouse.pos()
-      if not bagClick(mx, my) then clickTo(mx, my) end
+      if not sheetClick(mx, my) and not bagClick(mx, my) then clickTo(mx, my) end
     elseif e.type == "key" and ARROWS[e.key] then
       -- A key press walks one tile even without held-key reports.
       local sx, sy = ARROWS[e.key][1], ARROWS[e.key][2]
