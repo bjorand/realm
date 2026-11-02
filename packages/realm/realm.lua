@@ -59,7 +59,9 @@ local name = store.get("realm_name", "")
 -- tiles in and around the view and of the people present, the plain ones
 -- first, then the frames, then the variants ("tree/1") that fit; a variant
 -- left out is drawn as its "/0". V6 also draws the view outside the
--- lights in night colors, kept at DARK in the store.
+-- lights in night colors, kept at DARK in the store. V11 keeps the pixels
+-- of every sprite in its flash (the library): the store then holds only the
+-- sprites' entries, and a view is limited to 128 sprites, not to 39 KB.
 local STORE, PIXELS, MAX_SPRITES, DARK  -- from iso.info(); DARK: nil before V6
 local MAP_BYTES = 8192
 local SEE_R = 34  -- the see-through circle around the player's body
@@ -216,8 +218,10 @@ local sceneDirty = false
 -- The store as it follows the camera (see updateStore): the camera's chunk
 -- and the tile codes around it, whether it may lack a sprite (someone new
 -- came, a window opened), its sprites, bytes of pixels and the wanted
--- sprites left out (for F3), and each sprite's pixels, inflated once.
-local stream = {key = nil, region = {}, check = false, bytes = 0, count = 0, out = 0, pixels = {}}
+-- sprites left out (for F3), and each sprite's pixels, inflated once. lib:
+-- the card holds the library, each sprite's pixels at libOff[name].
+local stream = {key = nil, region = {}, check = false, bytes = 0, count = 0, out = 0, pixels = {},
+                lib = false, libOff = {}}
 
 local function walkable(x, y)
   return MAP > 0 and x >= 0 and y >= 0 and x < MAP and y < MAP and not blocked[y * MAP + x]
@@ -334,7 +338,7 @@ local function packPlan(names)
   local plan, used = {}, PIXELS
   for _, n in ipairs(names) do
     local _, len = pixelsOf(lib[n])
-    if #plan < MAX_SPRITES and used + len <= STORE then
+    if #plan < MAX_SPRITES and (stream.lib or used + len <= STORE) then
       plan[#plan + 1] = n
       used = used + len
     end
@@ -363,15 +367,21 @@ local function buildStore(plan)
     local s = lib[n]
     local at, len, flags = pixelsOf(s)
     if n == "wall" then flags = flags | OPAQUE end
-    if not stream.pixels[n] then
-      local _, data = zlib.inflate(libPath, at)
-      stream.pixels[n] = data
-    end
-    pixels[#pixels + 1] = stream.pixels[n]
     slotOf[n] = #entries
     reachUp = math.max(reachUp, s.ay)
-    entries[#entries + 1] = string.pack("<BBBBI3B", s.w, s.h, s.ax, s.ay, used, flags)
-    used = used + len
+    if stream.lib then
+      -- VLINK_ISO_LIB (4): the pixels are in the card's library.
+      entries[#entries + 1] = string.pack("<BBBBI3B", s.w, s.h, s.ax, s.ay, stream.libOff[n],
+                                          flags | 4)
+    else
+      if not stream.pixels[n] then
+        local _, data = zlib.inflate(libPath, at)
+        stream.pixels[n] = data
+      end
+      pixels[#pixels + 1] = stream.pixels[n]
+      entries[#entries + 1] = string.pack("<BBBBI3B", s.w, s.h, s.ax, s.ay, used, flags)
+      used = used + len
+    end
   end
   stream.bytes, stream.count = used - PIXELS, #entries
   local function tableOf(first, last)
@@ -1119,7 +1129,8 @@ local function frame()
     screenLabel(list, 24, 30, last and (last .. "ms") or "--ms")
     screenLabel(list, 74, 30, fps .. "fps")
     -- The store: KB of pixels and sprites in it.
-    screenLabel(list, 124, 30, string.format("%dK/%d", stream.bytes // 1024, stream.count))
+    screenLabel(list, 124, 30, stream.lib and "lib/" .. stream.count
+                               or string.format("%dK/%d", stream.bytes // 1024, stream.count))
     if stream.out > 0 then screenLabel(list, 174, 30, stream.out .. " out") end
     for i, ms in ipairs(lags) do
       local h, rgb = 16, "e04040"
@@ -1336,12 +1347,42 @@ local function updateStore()
   if sceneDirty then buildStore(plan) end
 end
 
+-- On a card V11, every sprite's pixels go to its flash once per version of
+-- realm.lib, known by a hash of them (FNV-1a, a word at a time); the card
+-- keeps them across restarts.
+local function useLibrary()
+  local li = iso.library and iso.library()
+  if not li then return end
+  local parts, at, h = {}, 0, 0x811C9DC5
+  for _, n in ipairs(sortedKeys(lib)) do
+    local off, len = pixelsOf(lib[n])
+    local _, data = zlib.inflate(libPath, off)
+    stream.libOff[n] = at
+    parts[#parts + 1] = data
+    at = at + len
+  end
+  local blob = table.concat(parts)
+  parts = nil
+  for i = 1, #blob - 3, 4 do
+    h = ((h ~ string.unpack("<i4", blob, i)) * 16777619) & 0xFFFFFFFF
+  end
+  local id = string.format("realm %08x %d", h, #blob)
+  if li.id ~= id then
+    if #blob > li.room then return end
+    term.cls()
+    term.put(2, 2, "Loading the art into the video card (once per version)...", 0x07)
+    if not iso.library(id, blob) then return end
+  end
+  stream.lib = true
+end
+
 -- ------------------------------------------------------------------- main
 
 local shown = splash()
 local ok, err = pcall(openLibrary)
 endSplash(shown)
 if not ok then error(err, 0) end
+useLibrary()
 W, VIEW_H = iso.open()
 if name == "" then
   name = askName()

@@ -33,7 +33,10 @@ with the HDMI firmware of 2026-10-31 on (the test pattern reads
 Torchlight needs the V6 card (firmware 1.1.0 on both boards, test pattern
 `TERMINA VIDEO 640x480 V6`): on V5 the night is just darker everywhere.
 Walls stop the torchlight from V9 on (firmware 1.4.0 on both boards): before,
-it shines through them.
+it shines through them. From V11 (firmware 1.9.0 on both boards) the card
+keeps every sprite of realm in its flash: realm writes them there once per
+version of its art ("Loading the art into the video card", a few seconds,
+the screen going black meanwhile), and no view is ever short of room.
 
 ## Playing
 
@@ -69,8 +72,9 @@ realm opens on a splash screen with its version on the bottom row, for
 - F3 shows the frame rate and, in the top left corner, a graph of the
   network lag over the last 16 seconds (a bar a second, 2 dots per 20 ms;
   green under 80 ms, yellow under 200 ms, red above or lost), then the
-  video card's store: KB of pixels and sprites in it, and how many
-  sprites the view wanted that did not fit ("8 out").
+  video card's store: KB of pixels and sprites in it ("lib/63" when the
+  pixels are in the card's library, V11), and how many sprites the view
+  wanted that did not fit ("8 out").
 - The server keeps the time of day, shown after your name on the status
   line: a day lasts 24 minutes, nights (21:00-5:00) are dark and blue, dawn
   and dusk warm. Names and the status line stay lit. A lit torch (yours or
@@ -116,8 +120,11 @@ realm opens on a splash screen with its version on the bottom row, for
   then the players' and the others' frames, then the variants, objects
   before grounds, smallest first; variants that do not fit are drawn as
   their `/0`. The store follows the camera: it is built again when the view
-  needs a sprite it lacks, so the art of the whole island can be far more
-  than 48 KB, as long as each view fits.
+  needs a sprite it lacks. On a card V11, the pixels of every sprite go
+  once into its flash (`iso.library`, identified by a hash of them) and
+  the store holds only the 128 sprites' entries: a view is then limited to
+  128 sprites, not to 48 KB. realm-server's `budget` test checks every view
+  of the island against it.
 - `art/palette.txt`, `art/sprites/*.txt`: the art sources, as text (see
   below).
 - `tools/artgen/`: builds `realm.lib` from `art/`, draws contact sheets,
