@@ -81,9 +81,9 @@ local function openLibrary()
   f:close()
   for _ = 1, n do
     local l = idx:byte(pos)
-    local w, h, ax, ay, _, off, roff, rlen = string.unpack("<BBBBBI4I4I4", idx, pos + 1 + l)
-    lib[idx:sub(pos + 1, pos + l)] = {w = w, h = h, ax = ax, ay = ay, off = off, roff = roff,
-                                      rlen = rlen}
+    local w, h, ax, ay, kind, off, roff, rlen = string.unpack("<BBBBBI4I4I4", idx, pos + 1 + l)
+    lib[idx:sub(pos + 1, pos + l)] = {w = w, h = h, ax = ax, ay = ay, kind = kind, off = off,
+                                      roff = roff, rlen = rlen}
     pos = pos + 18 + l
   end
   local info = iso.info and iso.info()
@@ -206,14 +206,8 @@ local overlay = false
 local OVERLAY = {"blank", "meter2", "meter4", "meter6", "meter8", "meter10", "meter12",
                  "meter14", "meter16"}
 -- The bag: a button in the bottom right corner and, open, a grid of 16x16
--- slots above it, drawn as people like the graph. Its sprites (also those
--- of the gear window) come into the store while the bag or the gear is
--- open.
-local BAG_SPRITES = {"blank", "bag", "slot", "item-gold", "item-sword", "item-potion",
-                     "item-torch", "item-match", "item-pelt", "item-misc", "item-dagger",
-                     "item-axe", "item-graveblade", "item-cap", "item-helm", "item-jerkin",
-                     "item-chainmail", "item-buckler", "item-shield", "item-boots",
-                     "item-ironboots", "item-copperring", "item-goldring", "item-scroll"}
+-- slots above it, drawn as people like the graph. The icons of what the
+-- player owns stay in the store (see wanted).
 local LAG_SAMPLES, LAG_STEP = 16, 20  -- one bar a second, 2 dots per 20 ms
 local lags = {}                       -- the last samples, oldest first; false: lost
 local pingSent, fps = nil, 0
@@ -273,10 +267,13 @@ local function regionCodes(cx, cy, w, h)
 end
 
 -- The sprites the store should hold, most needed first: the people
--- present, the plain sprites of the region, the windows open; then the
--- players' frames (walking, punch, sword raised, slash), the others'
--- walking; then the region's variants, the smallest first.
-local function wanted(region, windows)
+-- present, the plain sprites of the region, the icons of what the player
+-- owns (always there, so that opening the bag or the gear changes nothing
+-- in the store); then the players' frames (walking, punch, sword raised,
+-- slash), the others' walking; then the region's variants, the objects'
+-- before the grounds' (a tree changing shape shows more than grass), each
+-- the smallest first.
+local function wanted(region, icons)
   local first, frames, variants, seen = {}, {}, {}, {}
   local function add(n, list)
     if lib[n] and not seen[n] then
@@ -300,9 +297,7 @@ local function wanted(region, windows)
     local n = tileset[code]
     if n and (not n:match("/%d+$") or n:match("/0$")) then add(n, first) end
   end
-  if windows then
-    for _, n in ipairs(BAG_SPRITES) do add(n, first) end
-  end
+  for _, n in ipairs(icons) do add(n, first) end
   for f = 1, 5 do add("person/" .. f, frames) end
   for _, b in ipairs(people) do
     add(b .. "/1", frames)
@@ -316,6 +311,8 @@ local function wanted(region, windows)
     return s.rlen > 0 and math.min(s.rlen, s.w * s.h) or s.w * s.h
   end
   table.sort(variants, function(a, b)
+    local ga, gb = lib[a].kind == 0, lib[b].kind == 0  -- grounds last
+    if ga ~= gb then return gb end
     local sa, sb = size(a), size(b)
     return sa < sb or (sa == sb and a < b)
   end)
@@ -1302,20 +1299,35 @@ local function askName()
   end
 end
 
+-- The icons of what the player owns, and of the bag and gear windows.
+local function ownIcons()
+  local icons = {"slot", "item-misc", "item-gold"}
+  local function own(item)
+    if item and lib["item-" .. item] then icons[#icons + 1] = "item-" .. item end
+  end
+  for _, item in ipairs(sortedKeys(me.inv)) do
+    if me.inv[item] > 0 then own(item) end
+  end
+  for i = 1, #SLOTS do own(me.gear and me.gear[i]) end
+  own(me.weapon)
+  return icons
+end
+
 -- The store follows the camera: the region is computed again each 4 tiles
--- it moves (less than the region's margin), or when a window or the graph
--- opens, and the store is built again only when it lacks a sprite it
--- should hold.
+-- it moves (less than the region's margin), or when the player's belongings
+-- or the graph change, and the store is built again only when it lacks a
+-- sprite it should hold.
 local function updateStore()
   if not codes then return end
-  local windows = bagOpen or gearOpen
-  local key = string.format("%d %d %s %s", camX // (4 * HW), camY // (4 * HH), windows, overlay)
+  local icons = ownIcons()
+  local key = string.format("%d %d %s %s", camX // (4 * HW), camY // (4 * HH),
+                            table.concat(icons, " "), overlay)
   if key ~= stream.key then
     stream.region, stream.key, stream.check = regionCodes(camX, camY, W, VIEW_H), key, true
   end
   if not (sceneDirty or stream.check) then return end
   stream.check = false
-  local want = wanted(stream.region, windows)
+  local want = wanted(stream.region, icons)
   local plan = packPlan(want)
   stream.out = #want - #plan
   for _, n in ipairs(plan) do

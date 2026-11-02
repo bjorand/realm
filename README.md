@@ -111,10 +111,11 @@ realm opens on a splash screen with its version on the bottom row, for
   into the video card's store (the layout of `video/include/vlink.h` in
   the termina repository: 128 run-length sprites and 48 KB) the sprites
   of the tiles in and around the view (6 tiles beyond each side) and of
-  the people present, and the bag's while the bag or gear is open: the
-  plain sprites first, then the players' and the others' frames, then the
-  variants, smallest first; variants that do not fit are drawn as their
-  `/0`. The store follows the camera: it is built again when the view
+  the people present, and the icons of what the player owns (so that
+  opening the bag or the gear changes nothing): the plain sprites first,
+  then the players' and the others' frames, then the variants, objects
+  before grounds, smallest first; variants that do not fit are drawn as
+  their `/0`. The store follows the camera: it is built again when the view
   needs a sprite it lacks, so the art of the whole island can be far more
   than 48 KB, as long as each view fits.
 - `art/palette.txt`, `art/sprites/*.txt`: the art sources, as text (see
