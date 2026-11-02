@@ -74,11 +74,16 @@ realm opens on a splash screen with its version on the bottom row, for
   and dusk warm. Names and the status line stay lit. A lit torch (yours or
   anyone's) lights about 3 tiles around it; it burns 10 minutes, each
   lighting takes a match, and putting it out keeps the rest for later.
-- Ada, on the square, asks for 5 wolves; Tom, in the house north east of
-  the square, sells potions, torches, matches and resurrection scrolls and
-  buys pelts; Bram the
+- Ada, on the square, asks for 5 wolves; Tom, at his stall north east of
+  the square (in his house at night), sells potions, torches, matches and
+  resurrection scrolls and buys pelts; Bram the
   smith, in the south west house, sells weapons, armor, shields, boots and
   rings and buys gear back at half price.
+- The villagers live their own day: they sleep, work, go to the market
+  and walk home at dusk, run from monsters and talk aloud now and then.
+  They remember you, pass on the news about players ("Word is bob slew
+  the Revenant.") and like you for what you do: their friends pay Tom
+  and Bram a tenth less.
 - Death is as in Ultima Online: your bag and gold stay on your body, and
   you walk on as a ghost (a pale sheet), still wearing your gear. Monsters
   ignore you, you cannot fight nor trade, and the living only hear you
