@@ -1371,7 +1371,8 @@ local function useLibrary()
     if #blob > li.room then return end
     term.cls()
     term.put(2, 2, "Loading the art into the video card (once per version)...", 0x07)
-    if not iso.library(id, blob) then return end
+    -- Once more if it failed: the card keeps nothing of a writing cut short.
+    if not iso.library(id, blob) and not iso.library(id, blob) then return end
   end
   stream.lib = true
 end
