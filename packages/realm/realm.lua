@@ -55,10 +55,11 @@ local name = store.get("realm_name", "")
 -- deflated on its own (zlib.inflate reads one from the file). The video
 -- card V5 draws square ground diamonds, lets objects in front of the
 -- player show through a circle around them, and keeps 128 sprites in a
--- 48 KB store: the ones this scene needs are packed into it, the people
--- and plain sprites first, then the variants ("tree/1") that fit; a
--- variant left out is drawn as its "/0". V6 also draws the view outside
--- the lights in night colors, kept at DARK in the store.
+-- 48 KB store. The store follows the camera: it holds the sprites of the
+-- tiles in and around the view and of the people present, the plain ones
+-- first, then the frames, then the variants ("tree/1") that fit; a variant
+-- left out is drawn as its "/0". V6 also draws the view outside the
+-- lights in night colors, kept at DARK in the store.
 local STORE, PIXELS, MAX_SPRITES, DARK  -- from iso.info(); DARK: nil before V6
 local MAP_BYTES = 8192
 local SEE_R = 34  -- the see-through circle around the player's body
@@ -196,8 +197,8 @@ local MAP = 0
 local tileset, ntiles = {}, 0  -- tile code -> sprite name, from the server
 local codes = nil        -- the server's tiles: ground code, object code
 local blocked = {}       -- [y * MAP + x]: water or an object
-local bases = {}         -- people's sprites in this scene: "person", "wolf"
 local slotOf = {}        -- sprite name -> store slot
+local ents, myId = {}, nil
 
 -- F3: frames per second and a graph of the network lag in the top left
 -- corner, made of people: bars 2 to 16 dots high and labels.
@@ -205,8 +206,9 @@ local overlay = false
 local OVERLAY = {"blank", "meter2", "meter4", "meter6", "meter8", "meter10", "meter12",
                  "meter14", "meter16"}
 -- The bag: a button in the bottom right corner and, open, a grid of 16x16
--- slots above it, drawn as people like the graph. Its sprites always stay
--- in the store, so that opening it is immediate.
+-- slots above it, drawn as people like the graph. Its sprites (also those
+-- of the gear window) come into the store while the bag or the gear is
+-- open.
 local BAG_SPRITES = {"blank", "bag", "slot", "item-gold", "item-sword", "item-potion",
                      "item-torch", "item-match", "item-pelt", "item-misc", "item-dagger",
                      "item-axe", "item-graveblade", "item-cap", "item-helm", "item-jerkin",
@@ -217,6 +219,11 @@ local lags = {}                       -- the last samples, oldest first; false: 
 local pingSent, fps = nil, 0
 local reachUp = 0                     -- tallest sprite above its foot, in the store
 local sceneDirty = false
+-- The store as it follows the camera (see updateStore): the camera's chunk
+-- and the tile codes around it, whether it may lack a sprite (someone new
+-- came, a window opened), its sprites, bytes of pixels and the wanted
+-- sprites left out (for F3), and each sprite's pixels, inflated once.
+local stream = {key = nil, region = {}, check = false, bytes = 0, count = 0, out = 0, pixels = {}}
 
 local function walkable(x, y)
   return MAP > 0 and x >= 0 and y >= 0 and x < MAP and y < MAP and not blocked[y * MAP + x]
@@ -230,7 +237,7 @@ local function loadMap(w, h, hex)
     local ground, object = tileset[g] or "", o ~= NONE and tileset[o & 127] or ""
     blocked[i] = ground:match("^water") or (object ~= "" and not object:match("^flowers")) or nil
   end
-  sceneDirty = true
+  sceneDirty, stream.key = true, nil
 end
 
 -- The slot of a sprite, or of its "/0" when the variant did not fit.
@@ -245,8 +252,31 @@ local function sortedKeys(t)
   return keys
 end
 
--- The sprites of the scene, most needed first.
-local function wanted()
+-- The tile codes in and around the view of w x h dots from the camera
+-- (cx, cy): MARGIN tiles beyond each side, which also covers the tall
+-- objects whose foot is below it.
+local function regionCodes(cx, cy, w, h)
+  local MARGIN = 6
+  local u0, u1 = cx // HW - MARGIN, (cx + w) // HW + MARGIN
+  local v0, v1 = cy // HH - MARGIN, (cy + h) // HH + MARGIN
+  local found = {}
+  for y = 0, MAP - 1 do
+    for x = math.max(0, u0 + y), math.min(MAP - 1, u1 + y) do
+      if x + y >= v0 and x + y <= v1 then
+        local g, o = codes:byte(2 * (y * MAP + x) + 1, 2 * (y * MAP + x) + 2)
+        found[g] = true
+        if o ~= NONE then found[o & 127] = true end
+      end
+    end
+  end
+  return found
+end
+
+-- The sprites the store should hold, most needed first: the people
+-- present, the plain sprites of the region, the windows open; then the
+-- players' frames (walking, punch, sword raised, slash), the others'
+-- walking; then the region's variants, the smallest first.
+local function wanted(region, windows)
   local first, frames, variants, seen = {}, {}, {}, {}
   local function add(n, list)
     if lib[n] and not seen[n] then
@@ -257,22 +287,30 @@ local function wanted()
   if overlay then
     for _, n in ipairs(OVERLAY) do add(n, first) end
   end
+  local bases = {}
+  for _, p in pairs(ents) do bases[p.sprite] = true end
+  bases.person = nil
   local people = sortedKeys(bases)
   table.insert(people, 1, "person")
   for _, b in ipairs(people) do add(b .. "/0", first) end
-  for code = 0, ntiles - 1 do
+  add("blank", first)  -- labels and chat bubbles
+  add("bag", first)
+  local inView = sortedKeys(region)
+  for _, code in ipairs(inView) do
     local n = tileset[code]
-    if not n:match("/%d+$") or n:match("/0$") then add(n, first) end
+    if n and (not n:match("/%d+$") or n:match("/0$")) then add(n, first) end
   end
-  for _, n in ipairs(BAG_SPRITES) do add(n, first) end
-  -- The players' frames first: walking, then punch, sword raised, slash;
-  -- then the others' walking.
+  if windows then
+    for _, n in ipairs(BAG_SPRITES) do add(n, first) end
+  end
   for f = 1, 5 do add("person/" .. f, frames) end
   for _, b in ipairs(people) do
     add(b .. "/1", frames)
     add(b .. "/2", frames)
   end
-  for code = 0, ntiles - 1 do add(tileset[code], variants) end
+  for _, code in ipairs(inView) do
+    if tileset[code] then add(tileset[code], variants) end
+  end
   local function size(n)
     local s = lib[n]
     return s.rlen > 0 and math.min(s.rlen, s.w * s.h) or s.w * s.h
@@ -284,6 +322,27 @@ local function wanted()
   for _, n in ipairs(frames) do first[#first + 1] = n end
   for _, n in ipairs(variants) do first[#first + 1] = n end
   return first
+end
+
+-- Where a sprite's pixels are in the library, how many and its flags:
+-- run-length when they are smaller so.
+local function pixelsOf(s)
+  local len = s.w * s.h
+  if s.rlen > 0 and s.rlen < len then return s.roff, s.rlen, 1 end
+  return s.off, len, 0
+end
+
+-- The sprites of a wanted list that fit the store, in order.
+local function packPlan(names)
+  local plan, used = {}, PIXELS
+  for _, n in ipairs(names) do
+    local _, len = pixelsOf(lib[n])
+    if #plan < MAX_SPRITES and used + len <= STORE then
+      plan[#plan + 1] = n
+      used = used + len
+    end
+  end
+  return plan
 end
 
 -- The server's tiles with store slots in place of tile codes.
@@ -299,24 +358,25 @@ local function remap()
   return table.concat(out)
 end
 
--- Packs the scene's sprites into the store and sends it with the map.
-local function buildStore()
+-- Packs a plan's sprites into the store and sends it with the map.
+local function buildStore(plan)
   local entries, pixels, used = {}, {}, PIXELS
   slotOf, reachUp = {}, 0
-  for _, n in ipairs(wanted()) do
+  for _, n in ipairs(plan) do
     local s = lib[n]
-    local at, len, flags = s.off, s.w * s.h, 0
-    if s.rlen > 0 and s.rlen < len then at, len, flags = s.roff, s.rlen, 1 end
+    local at, len, flags = pixelsOf(s)
     if n == "wall" then flags = flags | OPAQUE end
-    if #entries < MAX_SPRITES and used + len <= STORE then
+    if not stream.pixels[n] then
       local _, data = zlib.inflate(libPath, at)
-      pixels[#pixels + 1] = data
-      slotOf[n] = #entries
-      reachUp = math.max(reachUp, s.ay)
-      entries[#entries + 1] = string.pack("<BBBBI3B", s.w, s.h, s.ax, s.ay, used, flags)
-      used = used + len
+      stream.pixels[n] = data
     end
+    pixels[#pixels + 1] = stream.pixels[n]
+    slotOf[n] = #entries
+    reachUp = math.max(reachUp, s.ay)
+    entries[#entries + 1] = string.pack("<BBBBI3B", s.w, s.h, s.ax, s.ay, used, flags)
+    used = used + len
   end
+  stream.bytes, stream.count = used - PIXELS, #entries
   local function tableOf(first, last)
     local t = table.concat(entries, "", first, math.min(last, #entries))
     return t .. string.rep("\0", 8 * (last - first + 1) - #t)
@@ -331,21 +391,8 @@ end
 
 -- ----------------------------------------------------------------- people
 
-local ents, myId = {}, nil
-
--- A sprite joins the scene. The store is built again for the people around
--- now: the sprites of those gone (the Revenant at dawn) leave the room.
-local function needBase(sprite)
-  if bases[sprite] or sprite == "person" then return end
-  bases = {[sprite] = true}
-  for _, p in pairs(ents) do
-    if p.sprite ~= "person" then bases[p.sprite] = true end
-  end
-  sceneDirty = true
-end
-
 local function person(kind, sprite, name, x, y, color)
-  needBase(sprite)
+  if not slotOf[sprite .. "/0"] then stream.check = true end
   return {kind = kind, sprite = sprite, base = name, name = name, x = x, y = y, tx = x, ty = y,
           step = 0, left = false, tunic = tunicOf(color), hp = 0, maxhp = 0, lit = false}
 end
@@ -491,7 +538,7 @@ function handlers.ghost(a)
   if not p then return end
   p.ghost = a[2] == "1"
   p.sprite = p.ghost and lib["ghost/0"] and "ghost" or "person"
-  if p.ghost then needBase("ghost") end
+  if p.ghost and not slotOf["ghost/0"] then stream.check = true end
   if id == myId then
     if not p.ghost and me.ghost then sound.play("alive:d=8,o=5,b=160:c,e,g,c6") end
     me.ghost = p.ghost
@@ -1074,6 +1121,9 @@ local function frame()
     local last = lags[#lags]
     screenLabel(list, 24, 30, last and (last .. "ms") or "--ms")
     screenLabel(list, 74, 30, fps .. "fps")
+    -- The store: KB of pixels and sprites in it.
+    screenLabel(list, 124, 30, string.format("%dK/%d", stream.bytes // 1024, stream.count))
+    if stream.out > 0 then screenLabel(list, 174, 30, stream.out .. " out") end
     for i, ms in ipairs(lags) do
       local h, rgb = 16, "e04040"
       if ms then
@@ -1252,6 +1302,28 @@ local function askName()
   end
 end
 
+-- The store follows the camera: the region is computed again each 4 tiles
+-- it moves (less than the region's margin), or when a window or the graph
+-- opens, and the store is built again only when it lacks a sprite it
+-- should hold.
+local function updateStore()
+  if not codes then return end
+  local windows = bagOpen or gearOpen
+  local key = string.format("%d %d %s %s", camX // (4 * HW), camY // (4 * HH), windows, overlay)
+  if key ~= stream.key then
+    stream.region, stream.key, stream.check = regionCodes(camX, camY, W, VIEW_H), key, true
+  end
+  if not (sceneDirty or stream.check) then return end
+  stream.check = false
+  local want = wanted(stream.region, windows)
+  local plan = packPlan(want)
+  stream.out = #want - #plan
+  for _, n in ipairs(plan) do
+    if not slotOf[n] then sceneDirty = true end
+  end
+  if sceneDirty then buildStore(plan) end
+end
+
 -- ------------------------------------------------------------------- main
 
 local shown = splash()
@@ -1279,7 +1351,7 @@ while not quit do
     connect()
   end
   if pump() then changed = true end
-  if sceneDirty and codes then buildStore() end
+  updateStore()
   -- The light changes a few dozen times a day: only the colors go again.
   if storeReady and lightLevel ~= lightKey() then applyLight() end
 
@@ -1338,7 +1410,6 @@ while not quit do
       bagOpen = not bagOpen
     elseif e.type == "key" and e.key == "f3" then
       overlay = not overlay
-      sceneDirty = true  -- the graph's sprites come into the store
     elseif ch == " " or (e.type == "key" and e.key == "space") then
       target = nil
       send("peace")

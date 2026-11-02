@@ -68,7 +68,9 @@ realm opens on a splash screen with its version on the bottom row, for
   sells you) pops up beside the bag.
 - F3 shows the frame rate and, in the top left corner, a graph of the
   network lag over the last 16 seconds (a bar a second, 2 dots per 20 ms;
-  green under 80 ms, yellow under 200 ms, red above or lost).
+  green under 80 ms, yellow under 200 ms, red above or lost), then the
+  video card's store: KB of pixels and sprites in it, and how many
+  sprites the view wanted that did not fit ("8 out").
 - The server keeps the time of day, shown after your name on the status
   line: a day lasts 24 minutes, nights (21:00-5:00) are dark and blue, dawn
   and dusk warm. Names and the status line stay lit. A lit torch (yours or
@@ -105,10 +107,16 @@ realm opens on a splash screen with its version on the bottom row, for
   firmware's `iso` library, so the Pico video card does the drawing.
 - `packages/realm/realm.lib`: every sprite, raw and run-length, each
   deflated (the game inflates what it loads with `zlib.inflate`; a package
-  file holds 64 KB), and the palette, built by artgen. The game packs the
-  sprites a scene needs into the video card's store (the layout of
-  `video/include/vlink.h` in the termina repository: 128 run-length sprites
-  and 48 KB); variants that do not fit are drawn as their `/0`.
+  file holds 64 KB), and the palette, built by artgen. The game packs
+  into the video card's store (the layout of `video/include/vlink.h` in
+  the termina repository: 128 run-length sprites and 48 KB) the sprites
+  of the tiles in and around the view (6 tiles beyond each side) and of
+  the people present, and the bag's while the bag or gear is open: the
+  plain sprites first, then the players' and the others' frames, then the
+  variants, smallest first; variants that do not fit are drawn as their
+  `/0`. The store follows the camera: it is built again when the view
+  needs a sprite it lacks, so the art of the whole island can be far more
+  than 48 KB, as long as each view fits.
 - `art/palette.txt`, `art/sprites/*.txt`: the art sources, as text (see
   below).
 - `tools/artgen/`: builds `realm.lib` from `art/`, draws contact sheets,
