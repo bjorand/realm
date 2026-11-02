@@ -265,11 +265,13 @@ local function wanted()
     if not n:match("/%d+$") or n:match("/0$") then add(n, first) end
   end
   for _, n in ipairs(BAG_SPRITES) do add(n, first) end
+  -- The players' frames first: walking, then punch, sword raised, slash;
+  -- then the others' walking.
+  for f = 1, 5 do add("person/" .. f, frames) end
   for _, b in ipairs(people) do
     add(b .. "/1", frames)
     add(b .. "/2", frames)
   end
-  for f = 3, 5 do add("person/" .. f, frames) end  -- punch, sword raised, slash
   for code = 0, ntiles - 1 do add(tileset[code], variants) end
   local function size(n)
     local s = lib[n]
@@ -331,11 +333,19 @@ end
 
 local ents, myId = {}, nil
 
-local function person(kind, sprite, name, x, y, color)
-  if not bases[sprite] and sprite ~= "person" then
-    bases[sprite] = true
-    sceneDirty = true
+-- A sprite joins the scene. The store is built again for the people around
+-- now: the sprites of those gone (the Revenant at dawn) leave the room.
+local function needBase(sprite)
+  if bases[sprite] or sprite == "person" then return end
+  bases = {[sprite] = true}
+  for _, p in pairs(ents) do
+    if p.sprite ~= "person" then bases[p.sprite] = true end
   end
+  sceneDirty = true
+end
+
+local function person(kind, sprite, name, x, y, color)
+  needBase(sprite)
   return {kind = kind, sprite = sprite, base = name, name = name, x = x, y = y, tx = x, ty = y,
           step = 0, left = false, tunic = tunicOf(color), hp = 0, maxhp = 0, lit = false}
 end
@@ -481,10 +491,7 @@ function handlers.ghost(a)
   if not p then return end
   p.ghost = a[2] == "1"
   p.sprite = p.ghost and lib["ghost/0"] and "ghost" or "person"
-  if p.ghost and not bases.ghost then
-    bases.ghost = true
-    sceneDirty = true
-  end
+  if p.ghost then needBase("ghost") end
   if id == myId then
     if not p.ghost and me.ghost then sound.play("alive:d=8,o=5,b=160:c,e,g,c6") end
     me.ghost = p.ghost
