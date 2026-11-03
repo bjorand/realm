@@ -14,7 +14,7 @@
 -- opens the bag (a click on a piece of gear puts it on), E what you wear
 -- (a click takes it off), P the character sheet (1-4 spend a level's point), Enter says something to everyone (over your head), Space
 -- stops fighting, C switches the view
--- between jumping near the edges
+-- between scrolling near the edges
 -- and following every step, F3 shows the frame rate and the network lag,
 -- Esc closes a menu, the journal or the bag, or quits.
 --
@@ -28,7 +28,7 @@
 --
 -- Copyright (c) 2026 Vendetta 84. All rights reserved. See LICENSE.
 
-local VERSION = "0.15.0"  -- the version in package.lua, shown on the splash screen
+local VERSION = "0.18.0"  -- the version in package.lua, shown on the splash screen
 local PROTOCOL = 2
 local PORT = 7878
 local HW, HH = 16, 16  -- half a ground diamond: square, as in Ultima Online
@@ -761,15 +761,21 @@ end
 local W, VIEW_H = 0, 0
 local camX, camY, follow = 0, 0, false
 
--- Keeps the player in view: recenters near the edges, or always.
+-- Keeps the player in view: the view scrolls once they leave its middle
+-- third, by what they went past it, or follows every step. A player who
+-- jumped out of the view (a ghost brought back, a login) is centered.
 local function frameCamera(force)
   local p = myId and ents[myId]
   if not p then return end
   local sx, sy = footX(p) - camX, footY(p) - camY
-  local out = sx < W / 5 or sx > W * 4 / 5 or sy < VIEW_H / 4 or sy > VIEW_H * 4 / 5
-  if force or follow or out then
+  local away = sx < 0 or sx >= W or sy < 0 or sy >= VIEW_H
+  if force or follow or away then
     camX, camY = footX(p) - W // 2, footY(p) - VIEW_H // 2
+    return
   end
+  local x0, x1, y0, y1 = W // 3, W * 2 // 3, VIEW_H // 3, VIEW_H * 2 // 3
+  if sx < x0 then camX = camX - (x0 - sx) elseif sx > x1 then camX = camX + (sx - x1) end
+  if sy < y0 then camY = camY - (y0 - sy) elseif sy > y1 then camY = camY + (sy - y1) end
 end
 
 local function entityAt(x, y)
