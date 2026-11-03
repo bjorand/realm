@@ -63,7 +63,7 @@ realm opens on a splash screen with its version on the bottom row, for
   Esc cancels): every player sees it over your head for a few seconds, and
   on their status line. Chat needs a realm server that knows `chat`.
 - 1-9 pick in a menu, Esc closes it. J opens the quest journal, H drinks
-  a potion, T lights or puts out a torch, Space stops fighting, C switches the camera between scrolling near the edges and following every step, Esc quits.
+  a potion, T lights or puts out a torch, Space stops fighting, C switches the camera, Esc quits.
 - The bag, in the bottom right corner: I or a click opens it. It shows
   your gold and every item with its count (12 slots); a click on a
   potion drinks it, on a torch or matches lights the torch, on anything
