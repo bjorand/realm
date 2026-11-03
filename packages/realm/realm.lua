@@ -44,10 +44,10 @@ local TUNICS = 64      -- each person's tunic and its shade, set here
 
 -- ----------------------------------------------------------------- config
 
-if arg[1] then store.set("realm_srv", arg[1]) end
-if arg[2] then store.set("realm_name", arg[2]) end
-local server = store.get("realm_srv", "localhost:" .. PORT)
-local name = store.get("realm_name", "")
+if arg[1] then termina.store.set("realm_srv", arg[1]) end
+if arg[2] then termina.store.set("realm_name", arg[2]) end
+local server = termina.store.get("realm_srv", "localhost:" .. PORT)
+local name = termina.store.get("realm_name", "")
 
 -- ---------------------------------------------------------------- library
 
@@ -71,10 +71,10 @@ local lib = {}           -- name -> {w, h, ax, ay, off}
 
 local function openLibrary()
   for _, p in ipairs({"/pkg/realm/realm.lib", "realm.lib", "/realm.lib"}) do
-    if fs.exists(p) then libPath = p end
+    if termina.fs.exists(p) then libPath = p end
   end
   if not libPath then error("realm.lib not found") end
-  local f = fs.open(libPath)
+  local f = termina.fs.open(libPath)
   local head = f:read(263)
   if head:sub(1, 5) ~= "RLIB\3" then error(libPath .. ": not a realm library") end
   local n = string.unpack("<I2", head, 6)
@@ -88,7 +88,7 @@ local function openLibrary()
                                       roff = roff, rlen = rlen}
     pos = pos + 18 + l
   end
-  local info = iso.info and iso.info()
+  local info = termina.iso.info and termina.iso.info()
   if not (info and info.tile and info.see) then
     error("realm needs the video card V5: flash both boards with the firmware of 2026-10-31 on")
   end
@@ -188,8 +188,8 @@ end
 
 -- Sends the colors of the hour to the store.
 local function applyLight()
-  iso.load(palette())
-  if night() then iso.load(colors(light()), DARK) end
+  termina.iso.load(palette())
+  if night() then termina.iso.load(colors(light()), DARK) end
   lightLevel = lightKey()
 end
 
@@ -375,7 +375,7 @@ local function buildStore(plan)
                                           flags | 4)
     else
       if not stream.pixels[n] then
-        local _, data = zlib.inflate(libPath, at)
+        local _, data = termina.zlib.inflate(libPath, at)
         stream.pixels[n] = data
       end
       pixels[#pixels + 1] = stream.pixels[n]
@@ -389,10 +389,10 @@ local function buildStore(plan)
     return t .. string.rep("\0", 8 * (last - first + 1) - #t)
   end
   local store = palette() .. tableOf(1, 64) .. string.rep("\255", MAP_BYTES) .. tableOf(65, 128)
-  iso.load(store .. table.concat(pixels))
+  termina.iso.load(store .. table.concat(pixels))
   applyLight()
   storeReady = true
-  if codes then iso.map(MAP, MAP, remap()) end
+  if codes then termina.iso.map(MAP, MAP, remap()) end
   sceneDirty = false
 end
 
@@ -476,7 +476,7 @@ local typing = nil                     -- the chat line being typed; nil: not ty
 local CHAT_LEN = 60                    -- the server cuts longer lines
 
 local function say(text, ms)
-  notice, noticeUntil = text, sys.millis() + (ms or 5000)
+  notice, noticeUntil = text, termina.sys.millis() + (ms or 5000)
 end
 
 local function nameOf(id)
@@ -499,7 +499,7 @@ local function disconnect(why)
   typing = nil
   bagSeen, me.ghost = false, false
   say(why, 5000)
-  nextTry = sys.millis() + 5000
+  nextTry = termina.sys.millis() + 5000
 end
 
 local handlers = {}
@@ -535,7 +535,7 @@ end
 function handlers.die(a)
   local id = tonumber(a[1])
   if target == id then target = nil end
-  if id == myId then sound.play("die:d=8,o=4,b=160:g,e,c") end
+  if id == myId then termina.sound.play("die:d=8,o=4,b=160:g,e,c") end
 end
 
 -- A player became a ghost (1) or lives again (0), on servers with ghosts.
@@ -547,7 +547,7 @@ function handlers.ghost(a)
   p.sprite = p.ghost and lib["ghost/0"] and "ghost" or "person"
   if p.ghost and not slotOf["ghost/0"] then stream.check = true end
   if id == myId then
-    if not p.ghost and me.ghost then sound.play("alive:d=8,o=5,b=160:c,e,g,c6") end
+    if not p.ghost and me.ghost then termina.sound.play("alive:d=8,o=5,b=160:c,e,g,c6") end
     me.ghost = p.ghost
   end
 end
@@ -564,7 +564,7 @@ local SWINGS = {fist = {{3, 200}}, sword = {{4, 120}, {5, 320}}}
 -- before it only tell the player's own one) and turns p toward the target.
 local function swing(p, t, weapon)
   if not SWINGS[weapon] then weapon = "sword" end  -- every blade swings like it
-  p.swing = {at = sys.millis(), weapon = weapon}
+  p.swing = {at = termina.sys.millis(), weapon = weapon}
   local dx, dy = t.tx - p.tx, t.ty - p.ty
   if dx ~= dy then p.left = dx - dy < 0 end
 end
@@ -578,10 +578,10 @@ function handlers.hit(a)
   if src ~= myId and dst ~= myId then return end
   if dmg == 0 then
     say(string.format("%s misses %s.", nameOf(src), nameOf(dst)), 2000)
-    sound.tone(330, 20)
+    termina.sound.tone(330, 20)
   else
     say(string.format("%s hits %s for %d.", nameOf(src), nameOf(dst), dmg), 2000)
-    sound.tone(dst == myId and 160 or 660, 40)
+    termina.sound.tone(dst == myId and 160 or 660, 40)
   end
   -- Hit first: fight back at what bites.
   if dst == myId and not target and isMonster(ents[src]) then target = src end
@@ -604,8 +604,8 @@ function handlers.inv(a)
   end
   if me.weapon and me.weapon ~= oldWeapon then got = "+" .. me.weapon end
   if got and bagSeen then
-    pickup, pickupUntil = got:sub(1, 8), sys.millis() + 2000
-    sound.play("pickup:d=16,o=5,b=200:c,e,g")
+    pickup, pickupUntil = got:sub(1, 8), termina.sys.millis() + 2000
+    termina.sound.play("pickup:d=16,o=5,b=200:c,e,g")
   end
   bagSeen = true
 end
@@ -654,7 +654,7 @@ end
 function handlers.pong(a)
   local t = tonumber(a[1])
   if t and t == pingSent then
-    addLag(sys.millis() - t)
+    addLag(termina.sys.millis() - t)
     pingSent = nil
   end
 end
@@ -689,8 +689,8 @@ function handlers.level(a)
   local id, n = tonumber(a[1]), tonumber(a[2])
   local p = id and ents[id]
   if not p or not n then return end
-  p.chat = {lines = {"Level " .. n .. "!"}, untilMs = sys.millis() + 4000}
-  if id == myId then sound.play("level:d=8,o=5,b=180:c,e,g,2c6") end
+  p.chat = {lines = {"Level " .. n .. "!"}, untilMs = termina.sys.millis() + 4000}
+  if id == myId then termina.sound.play("level:d=8,o=5,b=180:c,e,g,2c6") end
 end
 
 -- What a player says shows over their head for a while, and on the status
@@ -699,10 +699,10 @@ function handlers.chat(a, rest)
   local id, text = rest:match("^(%d+) (.+)$")
   local p = id and ents[tonumber(id)]
   if not p then return end
-  p.chat = {lines = wrap(text), untilMs = sys.millis() + 4000 + 100 * #text}
+  p.chat = {lines = wrap(text), untilMs = termina.sys.millis() + 4000 + 100 * #text}
   if tonumber(id) ~= myId then
     say(p.base .. ": " .. text, 8000)
-    sound.tone(990, 10)
+    termina.sound.tone(990, 10)
   end
 end
 
@@ -722,7 +722,7 @@ end
 local function connect()
   local host, port = server:match("^(.-):(%d+)$")
   host, port = host or server, tonumber(port) or PORT
-  local s, err = net.connect(host, port, 3000)
+  local s, err = termina.net.connect(host, port, 3000)
   if not s then
     disconnect("Cannot reach " .. server .. ": " .. tostring(err) .. ". Retrying...")
     return
@@ -839,9 +839,9 @@ local function clickTo(mx, my)
     send("talk %d", id)
   elseif walkable(x, y) then
     send("go %d %d", x, y)
-    sound.tone(880, 15)
+    termina.sound.tone(880, 15)
   else
-    sound.tone(220, 40)
+    termina.sound.tone(220, 40)
   end
 end
 
@@ -849,10 +849,10 @@ end
 -- tile back on both axes.
 local function heldStep()
   local sx, sy = 0, 0
-  if key.held("up") or key.held("w") or key.held("z") then sy = sy - 1 end
-  if key.held("down") or key.held("s") then sy = sy + 1 end
-  if key.held("left") or key.held("a") or key.held("q") then sx = sx - 1 end
-  if key.held("right") or key.held("d") then sx = sx + 1 end
+  if termina.key.held("up") or termina.key.held("w") or termina.key.held("z") then sy = sy - 1 end
+  if termina.key.held("down") or termina.key.held("s") then sy = sy + 1 end
+  if termina.key.held("left") or termina.key.held("a") or termina.key.held("q") then sx = sx - 1 end
+  if termina.key.held("right") or termina.key.held("d") then sx = sx + 1 end
   local function sign(v) return v > 0 and 1 or v < 0 and -1 or 0 end
   return sign(sx + sy), sign(sy - sx)
 end
@@ -886,7 +886,7 @@ local function hud()
       me.kills, me.need)) or (me.quest == "done" and "Ada's quest is done.") or "No quest yet."
     return "Journal  " .. entry .. "  J: close"
   end
-  if notice and sys.millis() < noticeUntil then return notice end
+  if notice and termina.sys.millis() < noticeUntil then return notice end
   local quest = me.quest == "active" and string.format("Wolves %d/%d", me.kills, me.need)
     or me.quest == "done" and "Quest done" or "Quest: see Ada"
   local fight = ""
@@ -1105,7 +1105,7 @@ end
 local function frame()
   local list = {}
   local p0 = myId and ents[myId]
-  local now = sys.millis()
+  local now = termina.sys.millis()
   for id, p in pairs(ents) do
     local f, lean, x, y = 0, 0, footX(p), footY(p)
     if p.step > 0 then f = 1 + (p.x + p.y + p.step * 2 // STEPS) % 2 end
@@ -1244,7 +1244,7 @@ local function frame()
     see = {x = footX(p0), y = footY(p0) - 20, r = SEE_R,
            depth = math.max(p0.x + p0.y, p0.tx + p0.ty)}
   end
-  iso.frame{x = camX, y = camY, people = list, deep = DEEP, recolor = TUNIC,
+  termina.iso.frame{x = camX, y = camY, people = list, deep = DEEP, recolor = TUNIC,
             text = TEXT, line = LINE, fg = PHOS, bg = HUD_BG, tile = 2 * HH, see = see,
             night = night() or nil, lights = lights, status = hud():sub(1, STATUS_LEN)}
 end
@@ -1261,52 +1261,52 @@ local LOGO = {
 local SPLASH_MS = 2500
 
 local function splash()
-  local cols, rows = term.cols(), term.rows()
+  local cols, rows = termina.term.cols(), termina.term.rows()
   local function center(y, text, attr)
-    term.put(math.max(0, (cols - utf8.len(text)) // 2), y, text, attr)
+    termina.term.put(math.max(0, (cols - utf8.len(text)) // 2), y, text, attr)
   end
-  term.showcursor(false)
-  term.cls()
+  termina.term.showcursor(false)
+  termina.term.cls()
   local top = math.max(1, (rows - #LOGO - 6) // 2)
   center(top, "VENDETTA 84 PRESENTS", 0x08)
   for i, line in ipairs(LOGO) do center(top + 1 + i, line, 0x0F) end
   center(top + #LOGO + 2, string.rep("░▒▓", 14), 0x08)
   center(top + #LOGO + 4, "An online isometric world", 0x07)
-  term.fill(rows - 1, " ", 0x70)
+  termina.term.fill(rows - 1, " ", 0x70)
   center(rows - 1, "realm " .. VERSION, 0x70)
-  while key.poll() do end  -- the Enter that started realm does not skip it
-  return sys.millis()
+  while termina.key.poll() do end  -- the Enter that started realm does not skip it
+  return termina.sys.millis()
 end
 
 -- Keeps the splash up until SPLASH_MS after it was drawn; a key or a click
 -- skips the wait.
 local function endSplash(shown)
-  while sys.millis() - shown < SPLASH_MS do
-    local e = key.poll()
+  while termina.sys.millis() - shown < SPLASH_MS do
+    local e = termina.key.poll()
     if e and (e.type == "key" or e.type == "char" or (e.type == "mouse" and e.down)) then break end
-    sys.yield()
+    termina.sys.yield()
   end
-  term.cls()
-  term.showcursor(true)
+  termina.term.cls()
+  termina.term.showcursor(true)
 end
 
 -- Asks for a name on the status line until a valid one is typed.
 local function askName()
   local typed = ""
   while true do
-    iso.frame{x = 0, y = 0, people = {}, deep = DEEP, recolor = TUNIC, text = TEXT,
+    termina.iso.frame{x = 0, y = 0, people = {}, deep = DEEP, recolor = TUNIC, text = TEXT,
               line = LINE, fg = PHOS, bg = HUD_BG,
               status = "VENDETTA REALM  Your name (2-12 letters, digits, - or _): " .. typed .. "_"}
-    local e = key.poll()
+    local e = termina.key.poll()
     while e do
       if e.type == "key" and e.key == "esc" then return nil
       elseif e.type == "key" and e.key == "enter" and typed:match("^%a[%w_-]+$") then return typed
       elseif e.type == "key" and e.key == "backspace" then typed = typed:sub(1, -2)
       elseif e.type == "char" and #typed < 12 and e.ch:match("^[%w_-]$") then typed = typed .. e.ch
       end
-      e = key.poll()
+      e = termina.key.poll()
     end
-    sys.yield()
+    termina.sys.yield()
   end
 end
 
@@ -1351,12 +1351,12 @@ end
 -- realm.lib, known by a hash of them (FNV-1a, a word at a time); the card
 -- keeps them across restarts.
 local function useLibrary()
-  local li = iso.library and iso.library()
+  local li = termina.iso.library and termina.iso.library()
   if not li then return end
   local parts, at, h = {}, 0, 0x811C9DC5
   for _, n in ipairs(sortedKeys(lib)) do
     local off, len = pixelsOf(lib[n])
-    local _, data = zlib.inflate(libPath, off)
+    local _, data = termina.zlib.inflate(libPath, off)
     stream.libOff[n] = at
     parts[#parts + 1] = data
     at = at + len
@@ -1369,10 +1369,10 @@ local function useLibrary()
   local id = string.format("realm %08x %d", h, #blob)
   if li.id ~= id then
     if #blob > li.room then return end
-    term.cls()
-    term.put(2, 2, "Loading the art into the video card (once per version)...", 0x07)
+    termina.term.cls()
+    termina.term.put(2, 2, "Loading the art into the video card (once per version)...", 0x07)
     -- Once more if it failed: the card keeps nothing of a writing cut short.
-    if not iso.library(id, blob) and not iso.library(id, blob) then return end
+    if not termina.iso.library(id, blob) and not termina.iso.library(id, blob) then return end
   end
   stream.lib = true
 end
@@ -1384,22 +1384,22 @@ local ok, err = pcall(openLibrary)
 endSplash(shown)
 if not ok then error(err, 0) end
 useLibrary()
-W, VIEW_H = iso.open()
+W, VIEW_H = termina.iso.open()
 if name == "" then
   name = askName()
-  if not name then iso.close() return end
-  store.set("realm_name", name)
+  if not name then termina.iso.close() return end
+  termina.store.set("realm_name", name)
 end
-mouse.show(true)
+termina.mouse.show(true)
 
 -- A frame goes when something may have changed: a tick, a key, a line from
 -- the server; and at least every REDRAW_MS for what the clock changes (a
 -- notice that ends).
 local REDRAW_MS = 250
-local last, quit, drawn, changed = sys.millis(), false, 0, true
-local lastWalk, lastPing, ticks, ticksAt = 0, 0, 0, sys.millis()
+local last, quit, drawn, changed = termina.sys.millis(), false, 0, true
+local lastWalk, lastPing, ticks, ticksAt = 0, 0, 0, termina.sys.millis()
 while not quit do
-  local now = sys.millis()
+  local now = termina.sys.millis()
   if not sock and now >= nextTry then
     frame()  -- shows "connecting" while net.connect blocks
     connect()
@@ -1409,7 +1409,7 @@ while not quit do
   -- The light changes a few dozen times a day: only the colors go again.
   if storeReady and lightLevel ~= lightKey() then applyLight() end
 
-  local e = key.poll()
+  local e = termina.key.poll()
   while e do
     changed = true
     local ch = e.type == "char" and e.ch:lower()
@@ -1468,7 +1468,7 @@ while not quit do
       target = nil
       send("peace")
     elseif e.type == "mouse" and e.down and e.button == 0 then
-      local mx, my = mouse.pos()
+      local mx, my = termina.mouse.pos()
       if not sheetClick(mx, my) and not gearClick(mx, my) and not bagClick(mx, my) then
         clickTo(mx, my)
       end
@@ -1478,7 +1478,7 @@ while not quit do
       walkToward(sx + sy, sy - sx)
       lastWalk = now
     end
-    e = key.poll()
+    e = termina.key.poll()
   end
 
   if now - last >= FRAME_MS then
@@ -1512,7 +1512,7 @@ while not quit do
     frame()
     changed, drawn = false, now
   end
-  sys.yield()
+  termina.sys.yield()
 end
 if sock then sock:close() end
-iso.close()
+termina.iso.close()
